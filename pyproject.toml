@@ -57,7 +57,12 @@ dev = [
     "pytest-timeout>=2.3,<3",
     "hypothesis>=6.112,<7",
     "mypy>=1.11,<2",
-    "ruff>=0.6,<0.15",
+    # Must stay in the same minor series as the globally installed ruff that
+    # ECC's quality-gate hook invokes (it resolves `ruff` from PATH, not from
+    # this venv). A mismatch means the hook formats code that
+    # `ruff format --check` then rejects -- endless, baffling churn.
+    # Keep in sync with: uv tool install ruff==<same minor>
+    "ruff>=0.16,<0.17",
 ]
 
 [project.scripts]
