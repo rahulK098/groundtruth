@@ -1,0 +1,48 @@
+# Everything here is excluded from the build context sent to the Docker daemon.
+# The single most important entry is .claude/ — the ECC install is ~703 files
+# and would be uploaded on every build, and could end up inside the image.
+
+.claude/
+.git/
+.gitignore
+.gitattributes
+
+# Virtualenvs and caches: the image builds its own via uv. A host .venv is
+# Windows-native and would be broken inside a Linux container anyway.
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+htmlcov/
+
+# Secrets must never enter a build layer — they are injected at runtime.
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# Large or regenerable data. NOTE the deliberate exceptions below: the eval
+# container needs the corpus, golden set, caches and tokenizer to run offline.
+data/raw/
+data/scratch/
+models/
+.hf-cache/
+
+# Outputs are bind-mounted at runtime so they land back in the working tree.
+results/
+docs/
+*.md
+!README.md
+
+# Dev-only tooling and editor noise.
+.github/
+.vscode/
+.idea/
+Thumbs.db
+Desktop.ini
+.DS_Store

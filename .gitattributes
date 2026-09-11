@@ -1,0 +1,33 @@
+# Normalize to LF in the repository. Developed on Windows, executed in Linux
+# containers: a CRLF shell script or entrypoint fails inside a container with a
+# misleading "no such file or directory".
+* text=auto eol=lf
+
+# Executables and container inputs must always be LF, never auto-detected.
+*.sh            text eol=lf
+*.bash          text eol=lf
+Dockerfile      text eol=lf
+*.Dockerfile    text eol=lf
+docker/**       text eol=lf
+Makefile        text eol=lf
+
+# Data files are compared byte-for-byte by the gate; never let a checkout
+# rewrite their line endings or the golden-set hash changes on Windows.
+*.jsonl         text eol=lf
+*.json          text eol=lf
+*.yaml          text eol=lf
+*.yml           text eol=lf
+
+# Binary / compressed artifacts: never touch, never diff as text.
+*.npy           binary
+*.zst           binary
+*.png           binary
+*.jpg           binary
+*.pdf           binary
+*.safetensors   binary
+*.bin           binary
+
+# Generated or vendored files: exclude from language statistics and collapse in diffs.
+data/tokenizers/**   linguist-vendored
+uv.lock              -diff linguist-generated
+results/runs/*.json  -diff

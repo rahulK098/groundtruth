@@ -1,0 +1,88 @@
+# ---------------------------------------------------------------------------
+# ECC project-scoped install (~703 generated files).
+# Committing it wholesale would bury the project in a reader's first impression.
+# We track only the three things we author ourselves.
+#
+# Order matters: exclude the CONTENTS (.claude/*), not the directory (.claude/).
+# Git cannot re-include a path inside an excluded directory, so `.claude/`
+# would make every negation below silently dead.
+# ---------------------------------------------------------------------------
+.claude/*
+!.claude/settings.json
+!.claude/hooks/
+.claude/hooks/*
+!.claude/hooks/py-gate.js
+!.claude/skills/
+.claude/skills/*
+!.claude/skills/golden-set-review/
+!.claude/skills/eval-protocol/
+
+# Personal, machine-specific, or runtime state — never shared.
+.claude/settings.local.json
+.claude/worktrees/
+.claude/scheduled_tasks.lock
+.observer-tmp/
+
+# ---------------------------------------------------------------------------
+# Python
+# ---------------------------------------------------------------------------
+.venv/
+venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+*.egg
+build/
+dist/
+.pytest_cache/
+.ruff_cache/
+.mypy_cache/
+.coverage
+.coverage.*
+coverage.xml
+htmlcov/
+
+# ---------------------------------------------------------------------------
+# Secrets. ANTHROPIC_API_KEY lives here and must never be committed.
+# .env.example IS tracked and documents every required variable.
+# ---------------------------------------------------------------------------
+.env
+.env.*
+!.env.example
+*.pem
+*.key
+
+# ---------------------------------------------------------------------------
+# Data: what is tracked here is deliberate, and is the point of the project.
+#
+#   TRACKED   data/corpus/     snapshotted corpus + manifest (~3 MB zstd)
+#   TRACKED   data/golden/     the golden set, candidates, review log
+#   TRACKED   data/cache/      committed embedding/rerank/judgment caches (~15 MB)
+#   TRACKED   data/tokenizers/ vendored tokenizer, so chunking needs no network
+#
+# Those four make "clone and reproduce with one command" true. Only the raw
+# unprocessed fetch is ignored, because it is regenerable and large.
+# ---------------------------------------------------------------------------
+data/raw/
+data/scratch/
+
+# Local model weights (~1.25 GB). Fetched into a Docker volume, never committed.
+models/
+.hf-cache/
+
+# ---------------------------------------------------------------------------
+# Results ARE tracked — they are the audit trail the project exists to produce.
+# Only transient local runs are ignored.
+# ---------------------------------------------------------------------------
+results/scratch/
+results/*.tmp.json
+
+# ---------------------------------------------------------------------------
+# Editor / OS noise
+# ---------------------------------------------------------------------------
+.vscode/
+.idea/
+*.swp
+Thumbs.db
+Desktop.ini
+.DS_Store
