@@ -121,6 +121,7 @@ firm data · agentic orchestration.
 | [docs/api.md](docs/api.md) | API contract and intent |
 | [docs/architecture.md](docs/architecture.md) | The two-path split and data flow |
 | [docs/methodology.md](docs/methodology.md) | Labeling protocol, metric formulas, judge σ |
+| [docs/harness.md](docs/harness.md) | ECC development harness: install, hooks, known gaps |
 | [plan.md](plan.md) | The original product brief |
 
 ## License
