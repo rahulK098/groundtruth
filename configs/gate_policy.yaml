@@ -1,0 +1,45 @@
+# Regression gate policy.
+#
+# NOT a retrieval config -- the registry skips this file by stem. It is
+# consumed by the gate in Phase 8 and is committed now so the thresholds are
+# decided before any numbers exist to be tempted by.
+#
+# Thresholds chosen before measurement is the whole point. Picking them after
+# seeing the results is how a gate ends up calibrated to pass.
+
+primary_metric: recall_at_10
+
+# Gate EVERY config, not just the winner. A change that improves the shipped
+# config while quietly wrecking the baseline is still a regression, and it is
+# exactly the kind that goes unnoticed.
+gated_configs:
+  - dense_512
+  - dense_256
+  - hybrid_512
+  - hybrid_512_rerank
+
+# Absolute drop, in metric points, tolerated before the gate fails.
+# recall_at_10 is 1 point, per the brief. The others are slightly looser
+# because they are noisier, not because they matter less.
+max_absolute_drop:
+  recall_at_10: 0.010
+  ndcg_at_10: 0.015
+  mrr_at_10: 0.020
+
+# --- Anti-cheat ------------------------------------------------------------
+# The asymmetry here is the intellectual core of the gate.
+#
+# Changing the CONFIG is the workflow -- failing on it would make the gate
+# useless and it would be switched off within a day. So: warn.
+#
+# Changing the GOLDEN SET or the CORPUS moves the goalposts. Without a hard
+# fail, any regression can be "fixed" by deleting the queries it fails. So:
+# fail, and require a deliberate re-baseline commit.
+require_golden_set_hash_match: true
+require_corpus_hash_match: true
+config_hash_mismatch: warn
+
+# Per-category metrics are for diagnosis, never for gating: at n≈20 a single
+# query swings a category by several points, and a flapping gate gets ignored,
+# which destroys the credibility of the gate that does work.
+per_category: report_only

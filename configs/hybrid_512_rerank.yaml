@@ -1,0 +1,51 @@
+# The reranker arm.
+#
+# Identical to hybrid_512 except the cross-encoder stage is enabled. Isolates
+# "does reranking help, and what does it cost?" -- the latency column in the
+# report matters as much as the quality column here, because this is the
+# configuration whose tradeoff the final recommendation has to argue about.
+#
+# A cross-encoder scores each (query, passage) pair jointly, so cost scales
+# with top_n_in, not with corpus size: 50 candidates means 50 forward passes
+# per query.
+name: hybrid_512_rerank
+description: Reranker arm. hybrid_512 plus a bge-reranker-base cross-encoder stage.
+schema_version: 1
+
+retrieval_mode: hybrid
+top_k: 10
+dense_top_n: 50
+
+chunking:
+  strategy: fixed_token_window
+  chunk_size: 512
+  chunk_overlap: 50
+  tokenizer_id: BAAI/bge-small-en-v1.5
+
+embedding:
+  model_id: BAAI/bge-small-en-v1.5
+  revision: UNPINNED-resolve-before-phase-3
+  dimension: 384
+  normalize: true
+  query_prefix: "Represent this sentence for searching relevant passages: "
+
+lexical:
+  backend: bm25
+  top_n: 50
+  language: english
+  k1: 1.2
+  b: 0.75
+
+fusion:
+  method: rrf
+  k: 60
+
+reranker:
+  enabled: true
+  # ~1.11 GB. The single heaviest dependency in the project, and the reason
+  # the model libraries are an optional extra rather than a core dependency.
+  model_id: BAAI/bge-reranker-base
+  revision: UNPINNED-resolve-before-phase-3
+  # 50 fused candidates in, top_k out. Must be >= top_k or the stage would be
+  # silently truncating results; a validator enforces that.
+  top_n_in: 50

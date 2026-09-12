@@ -1,0 +1,37 @@
+# The chunk-size arm.
+#
+# Identical to dense_512 in EVERY field except `chunking`. That is enforced by
+# a test -- if anything else drifts, the comparison stops measuring chunk size
+# and starts measuring a confound.
+#
+# Overlap is scaled proportionally (~10% of the window) so the two arms differ
+# in window width rather than in how much context is duplicated.
+name: dense_256
+description: Chunk-size arm. Identical to dense_512 except for 256-token windows.
+schema_version: 1
+
+retrieval_mode: dense
+top_k: 10
+dense_top_n: 50
+
+chunking:
+  strategy: fixed_token_window
+  chunk_size: 256
+  chunk_overlap: 25
+  tokenizer_id: BAAI/bge-small-en-v1.5
+
+embedding:
+  model_id: BAAI/bge-small-en-v1.5
+  revision: UNPINNED-resolve-before-phase-3
+  dimension: 384
+  normalize: true
+  query_prefix: "Represent this sentence for searching relevant passages: "
+
+lexical: null
+fusion: null
+
+reranker:
+  enabled: false
+  model_id: null
+  revision: null
+  top_n_in: 50

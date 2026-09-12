@@ -1,0 +1,41 @@
+# Baseline. Everything else is measured against this.
+#
+# Fixed 512-token windows, dense retrieval only. Deliberately unremarkable:
+# a baseline that is already tuned makes every later comparison flattering.
+name: dense_512
+description: Baseline. Dense retrieval over fixed 512-token windows, no lexical arm.
+schema_version: 1
+
+retrieval_mode: dense
+top_k: 10
+dense_top_n: 50
+
+chunking:
+  strategy: fixed_token_window
+  chunk_size: 512
+  chunk_overlap: 50
+  # Measured with the model's own tokenizer, vendored into the repo, so
+  # chunk_size means what the encoder thinks it means and needs no network.
+  tokenizer_id: BAAI/bge-small-en-v1.5
+
+embedding:
+  model_id: BAAI/bge-small-en-v1.5
+  # MUST be replaced with the real HuggingFace commit SHA before any
+  # embeddings are generated in Phase 3. Left explicitly unpinned rather than
+  # filled with a plausible-looking fake: an invented SHA would look pinned
+  # while pinning nothing, which is worse than an obvious placeholder.
+  revision: UNPINNED-resolve-before-phase-3
+  dimension: 384
+  normalize: true
+  # bge expects this instruction on queries but NOT on passages. It is part of
+  # the embedding cache key, so changing it invalidates query vectors only.
+  query_prefix: "Represent this sentence for searching relevant passages: "
+
+lexical: null
+fusion: null
+
+reranker:
+  enabled: false
+  model_id: null
+  revision: null
+  top_n_in: 50

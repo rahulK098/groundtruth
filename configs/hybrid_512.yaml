@@ -1,0 +1,51 @@
+# The hybrid arm.
+#
+# Identical to dense_512 except that a lexical arm is added and the two are
+# fused. Isolates "does lexical retrieval help?" from chunk size.
+#
+# backend `bm25` is the in-process Okapi implementation with a real IDF term.
+# It is NOT Postgres tsvector -- that backend is `pg_fts`, is named separately,
+# and has no IDF at all. See ADR-0007.
+name: hybrid_512
+description: Hybrid arm. Dense + in-process BM25, fused with Reciprocal Rank Fusion.
+schema_version: 1
+
+retrieval_mode: hybrid
+top_k: 10
+dense_top_n: 50
+
+chunking:
+  strategy: fixed_token_window
+  chunk_size: 512
+  chunk_overlap: 50
+  tokenizer_id: BAAI/bge-small-en-v1.5
+
+embedding:
+  model_id: BAAI/bge-small-en-v1.5
+  revision: UNPINNED-resolve-before-phase-3
+  dimension: 384
+  normalize: true
+  query_prefix: "Represent this sentence for searching relevant passages: "
+
+lexical:
+  backend: bm25
+  top_n: 50
+  language: english
+  # Standard Okapi defaults. Deliberately NOT tuned: tuning the lexical arm
+  # while leaving the dense arm untouched would make the hybrid-vs-dense
+  # comparison measure tuning effort rather than the method.
+  k1: 1.2
+  b: 0.75
+
+fusion:
+  method: rrf
+  # RRF consumes ranks, not scores, so the two arms need no score calibration.
+  # k=60 is the value from the original Cormack et al. paper, used as-is for
+  # the same reason k1/b are: an untuned constant keeps the comparison honest.
+  k: 60
+
+reranker:
+  enabled: false
+  model_id: null
+  revision: null
+  top_n_in: 50
