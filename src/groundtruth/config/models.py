@@ -14,9 +14,10 @@ from __future__ import annotations
 
 from typing import Final, Literal, Self
 
-from pydantic import BaseModel, ConfigDict, Field, model_validator
+from pydantic import Field, model_validator
 
 from groundtruth.config.hashing import content_hash
+from groundtruth.frozen import FrozenModel
 
 #: Bump deliberately, in its own commit, when the schema changes in a way that
 #: should invalidate existing baselines. It is part of the config hash, so a
@@ -33,21 +34,7 @@ KNOWN_MODEL_DIMENSIONS: Final[dict[str, int]] = {
 }
 
 
-class _Frozen(BaseModel):
-    """Immutable, strict base.
-
-    ``extra="forbid"`` matters more than it looks: a silently ignored key is
-    indistinguishable from a knob that does nothing.
-
-    ``protected_namespaces=()`` disables pydantic's warning about fields
-    beginning with ``model_``. Here ``model_id`` means a retrieval model, and
-    renaming it to dodge a framework warning would be the tail wagging the dog.
-    """
-
-    model_config = ConfigDict(frozen=True, extra="forbid", protected_namespaces=())
-
-
-class ChunkingConfig(_Frozen):
+class ChunkingConfig(FrozenModel):
     """How documents are split. The independent variable of the chunk-size arm."""
 
     strategy: Literal["fixed_token_window"] = "fixed_token_window"
@@ -66,7 +53,7 @@ class ChunkingConfig(_Frozen):
         return self
 
 
-class EmbeddingConfig(_Frozen):
+class EmbeddingConfig(FrozenModel):
     """The dense encoder. ``revision`` is pinned so weights cannot drift."""
 
     model_id: str = Field(min_length=1)
@@ -89,7 +76,7 @@ class EmbeddingConfig(_Frozen):
         return self
 
 
-class LexicalConfig(_Frozen):
+class LexicalConfig(FrozenModel):
     """The lexical arm of hybrid retrieval.
 
     ``pg_fts`` is Postgres ``tsvector`` ranking. It is deliberately NOT named
@@ -103,7 +90,7 @@ class LexicalConfig(_Frozen):
     b: float = Field(default=0.75, ge=0, le=1, description="BM25 length normalization.")
 
 
-class FusionConfig(_Frozen):
+class FusionConfig(FrozenModel):
     """Reciprocal Rank Fusion.
 
     RRF consumes ranks, not scores, so the dense and lexical arms need no score
@@ -115,7 +102,7 @@ class FusionConfig(_Frozen):
     k: int = Field(default=60, gt=0)
 
 
-class RerankerConfig(_Frozen):
+class RerankerConfig(FrozenModel):
     """Optional cross-encoder reranking stage."""
 
     enabled: bool = False
@@ -136,7 +123,7 @@ class RerankerConfig(_Frozen):
         return self
 
 
-class RetrievalConfig(_Frozen):
+class RetrievalConfig(FrozenModel):
     """One complete, reproducible retrieval configuration."""
 
     name: str = Field(min_length=1)

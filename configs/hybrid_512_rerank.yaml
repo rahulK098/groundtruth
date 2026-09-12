@@ -24,7 +24,7 @@ chunking:
 
 embedding:
   model_id: BAAI/bge-small-en-v1.5
-  revision: UNPINNED-resolve-before-phase-3
+  revision: 5c38ec7c405ec4b44b94cc5a9bb96e735b38267a
   dimension: 384
   normalize: true
   query_prefix: "Represent this sentence for searching relevant passages: "
@@ -45,7 +45,7 @@ reranker:
   # ~1.11 GB. The single heaviest dependency in the project, and the reason
   # the model libraries are an optional extra rather than a core dependency.
   model_id: BAAI/bge-reranker-base
-  revision: UNPINNED-resolve-before-phase-3
+  revision: 2cfc18c9415c912f9d8155881c133215df768a70
   # 50 fused candidates in, top_k out. Must be >= top_k or the stage would be
   # silently truncating results; a validator enforces that.
   top_n_in: 50
