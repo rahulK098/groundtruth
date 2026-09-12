@@ -3,10 +3,10 @@
 > A regression-gated evaluation harness that **proves** a retrieval change was an
 > improvement — instead of asserting it.
 
-**Status: scaffolding (Phase 0 of 12).** Documentation and project structure are
-in place; the harness is not yet implemented. **No results have been measured
-yet**, and this README will not carry a results table until they are. See
-[Build status](#build-status).
+**Status: in progress (Phase 1 of 12 complete).** Documentation, project
+structure and the configuration layer are in place; retrieval and scoring are
+not yet implemented. **No results have been measured yet**, and this README will
+not carry a results table until they are. See [Build status](#build-status).
 
 ---
 
@@ -46,8 +46,8 @@ failure this project argues against.
 
 | Phase | Status |
 |---|---|
-| 0 — Repo, ECC harness, docs, ADRs | **in progress** |
-| 1 — Config model + content hashing | not started |
+| 0 — Repo, ECC harness, docs, ADRs | **done** |
+| 1 — Config model + content hashing | **done** — 66 tests, 97% coverage |
 | 2 — Corpus ingest + chunking | not started |
 | 3 — Embedding cache + guards | not started |
 | 4 — Retrieval (NumPy + BM25 + RRF) | not started |
