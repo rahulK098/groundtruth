@@ -31,6 +31,10 @@ class ModelExtraNotInstalledError(Exception):
     """The optional `models` extra is not installed."""
 
 
+class UnknownEmbeddingDimensionError(Exception):
+    """The model does not report a fixed sentence-embedding width."""
+
+
 class SentenceTransformerEmbedder:
     """Embeds with a pinned bge checkpoint on CPU."""
 
@@ -87,7 +91,16 @@ class SentenceTransformerEmbedder:
 
     @property
     def dimension(self) -> int:
-        return int(self._model.get_sentence_embedding_dimension())
+        dimension = self._model.get_sentence_embedding_dimension()
+        if dimension is None:
+            # Happens for architectures sentence-transformers cannot infer a
+            # single output width for. Such a model cannot back a fixed-width
+            # cache, so failing here beats writing a ragged store.
+            raise UnknownEmbeddingDimensionError(
+                f"{self._model_id} does not report a sentence embedding "
+                f"dimension, so it cannot back a fixed-width embedding cache."
+            )
+        return int(dimension)
 
     @property
     def build_settings(self) -> dict[str, Any]:

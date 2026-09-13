@@ -3,8 +3,8 @@
 > A regression-gated evaluation harness that **proves** a retrieval change was an
 > improvement — instead of asserting it.
 
-**Status: in progress (Phase 1 of 12 complete).** Documentation, project
-structure and the configuration layer are in place; retrieval and scoring are
+**Status: in progress (Phases 0–3 of 12 complete).** The corpus, chunking and
+the committed embedding cache are in place; retrieval, scoring and the gate are
 not yet implemented. **No results have been measured yet**, and this README will
 not carry a results table until they are. See [Build status](#build-status).
 
@@ -48,8 +48,8 @@ failure this project argues against.
 |---|---|
 | 0 — Repo, ECC harness, docs, ADRs | **done** |
 | 1 — Config model + content hashing | **done** — 66 tests, 97% coverage |
-| 2 — Corpus ingest + chunking | not started |
-| 3 — Embedding cache + guards | not started |
+| 2 — Corpus ingest + chunking | **done** — 150 opinions, 7.4M chars |
+| 3 — Embedding cache + guards | **done** — 11,028 vectors, 8.5 MB |
 | 4 — Retrieval (NumPy + BM25 + RRF) | not started |
 | 5 — Golden set review (100 pairs) | not started |
 | 6 — Scorers | not started |
