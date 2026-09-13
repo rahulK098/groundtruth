@@ -34,3 +34,7 @@ def tokenizers_dir() -> Path:
 
 def corpus_dir() -> Path:
     return project_root() / "data" / "corpus"
+
+
+def cache_dir() -> Path:
+    return project_root() / "data" / "cache"

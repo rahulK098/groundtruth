@@ -148,7 +148,7 @@ show_error_codes = true
 
 [[tool.mypy.overrides]]
 # These ship without type information or with incomplete stubs.
-module = ["sentence_transformers.*", "pgvector.*", "zstandard.*", "tokenizers.*"]
+module = ["sentence_transformers.*", "pgvector.*", "zstandard.*", "tokenizers.*", "torch.*"]
 ignore_missing_imports = true
 
 [tool.pytest.ini_options]
@@ -178,6 +178,11 @@ omit = [
     # Network fetch path: exercised manually, not reproducibly testable in the
     # fast lane. Excluded honestly rather than padded with a mock-only test.
     "src/groundtruth/corpus/courtlistener.py",
+    # Requires the `models` extra (torch + sentence-transformers), which the
+    # gate environment deliberately does not install -- so this file cannot be
+    # imported there at all, let alone executed. Its caller, builder.py, IS
+    # covered via a fake embedder.
+    "src/groundtruth/embedding/sentence_transformer.py",
 ]
 
 [tool.coverage.report]
