@@ -46,7 +46,7 @@ failure this project argues against.
 
 | Phase | Status |
 |---|---|
-| 0 — Repo, ECC harness, docs, ADRs | **done** |
+| 0 — Repo, harness, project scaffold | **done** |
 | 1 — Config model + content hashing | **done** — 66 tests, 97% coverage |
 | 2 — Corpus ingest + chunking | **done** — 150 opinions, 7.4M chars |
 | 3 — Embedding cache + guards | **done** — 11,028 vectors, 8.5 MB |
@@ -57,20 +57,56 @@ failure this project argues against.
 | 8 — Regression gate + demos | not started |
 | 9–12 — Reranker, service, generation eval, report | not started |
 
-## Reproducing
+## Running it
 
-Once implemented, the whole comparison reproduces with:
+Requires Python 3.12 and [uv](https://docs.astral.sh/uv/). Nothing else — no
+API key, no model download, no GPU, no network.
 
 ```bash
-uv sync --frozen --extra dev
-make reproduce
+uv sync --frozen --extra dev     # ~50 packages, no torch
+uv run pytest                    # 275 tests
+uv run gt --help
 ```
 
-No API key, no model download, no GPU, no network. That is deliberate: the
-embedding cache is committed and the model libraries are an optional extra
-([ADR-0003](docs/adr/0003-committed-embedding-cache.md)).
+That works offline because the corpus snapshot and the embedding cache are
+**committed** (11 MB total), and the model libraries live in an optional extra
+the default install never pulls.
 
-Full instructions, including the Docker service path: **[docs/how-to-run.md](docs/how-to-run.md)**.
+### Regenerating the committed artifacts
+
+Only needed when changing chunking, the embedding model, or the corpus
+selection. This is the one path that needs credentials and network:
+
+```bash
+uv sync --frozen --extra dev --extra models   # adds CPU torch + sentence-transformers
+cp .env.example .env                          # add COURTLISTENER_API_TOKEN
+
+uv run gt corpus fetch --limit 150            # ~5 API requests
+uv run gt cache build                         # ~99 min, single-threaded for determinism
+uv run gt corpus verify && uv run gt cache verify
+```
+
+## How it is built
+
+**Two storage paths, one retrieval code path.** The evaluation path uses exact
+NumPy cosine and an in-process Okapi BM25 — no Docker, no database, no model —
+so the gate is fast and bit-reproducible. The service path uses Postgres with
+pgvector and `tsvector`. A parity test asserts both return identical top-10
+results; everything above the storage primitives is shared code.
+
+**Relevance labels are character spans, not chunk IDs.** Labels tied to chunk
+IDs would be invalidated by any chunking change, making the chunk-size
+comparison — the project's headline experiment — literally impossible to run.
+
+**The embedding cache is committed and authoritative.** The gate's embedder
+*raises* on a cache miss rather than falling back to the model. A silent
+fallback would mix fresh and stale vectors and report plausible, confident,
+wrong numbers with nothing to indicate a problem.
+
+**Every result carries four hashes** — config, golden set, corpus, code. The
+gate hard-fails when the golden set or corpus changes, which blocks the classic
+cheat of "fixing" a regression by deleting the queries it fails. A config change
+is only a warning, because changing the config *is* the workflow.
 
 ## How the golden set is built
 
@@ -84,45 +120,35 @@ Full instructions, including the Docker service path: **[docs/how-to-run.md](doc
    cherry-picking is not.
 
 Letting a model both write and grade the set would measure whether retrieval
-agrees with that model's biases. See
-[ADR-0009](docs/adr/0009-golden-set-is-human-reviewed.md) and
-[docs/methodology.md](docs/methodology.md).
+agrees with that model's biases, not whether it finds the right law.
 
 ## Honest limitations
 
 Stated up front, because a harness that hides its own weaknesses is worthless:
 
-- **The gate is not automatically enforced.** CI was removed by choice
-  ([ADR-0006](docs/adr/0006-gate-runs-locally-not-in-ci.md)); nothing stops a
-  commit that skips it. Evidence that it bites is reproducible via
+- **The gate is not automatically enforced.** CI was removed by choice; nothing
+  stops a commit that skips it. Evidence that it bites is reproducible via
   `make demo-regression` rather than a CI screenshot.
 - **The headline numbers come from the NumPy path, not Postgres.** A parity test
-  ties them together ([ADR-0001](docs/adr/0001-two-path-retrieval-architecture.md)).
-- **Postgres `tsvector` is not BM25** — it has no IDF. It is never called BM25
-  here ([ADR-0007](docs/adr/0007-pg-fts-is-not-bm25.md)).
+  ties them together.
+- **Postgres `tsvector` is not BM25** — it has no IDF term at all. It is never
+  called BM25 here; the backend is named `pg_fts`.
 - **The LLM judge is not deterministic.** Anthropic has no seed parameter.
   Reproducibility comes from a committed judgment cache, and the measured
-  run-to-run σ is published ([ADR-0011](docs/adr/0011-claude-judges-but-never-labels.md)).
+  run-to-run σ is published alongside the metric.
 - **Single annotator**, so there is no inter-annotator agreement statistic — only
   a published self-consistency rate.
+- **150 documents, not 500.** Real Supreme Court opinions average ~15,000
+  tokens, so 500 would mean a ~36 MB embedding cache and git-LFS — which breaks
+  one-command reproduction. The chunk count (14,712) is what governs retrieval
+  difficulty, and it is unchanged.
 
 ## Out of scope
 
 A production legal RAG UI · fine-tuning · multi-tenant auth or billing · real
 firm data · agentic orchestration.
 
-## Documentation
-
-| Document | What it covers |
-|---|---|
-| [docs/adr/](docs/adr/README.md) | 11 architecture decision records |
-| [docs/tech-stack.md](docs/tech-stack.md) | Every dependency, and what it beat |
-| [docs/how-to-run.md](docs/how-to-run.md) | Setup, gate, service, troubleshooting |
-| [docs/api.md](docs/api.md) | API contract and intent |
-| [docs/architecture.md](docs/architecture.md) | The two-path split and data flow |
-| [docs/methodology.md](docs/methodology.md) | Labeling protocol, metric formulas, judge σ |
-| [docs/harness.md](docs/harness.md) | ECC development harness: install, hooks, known gaps |
-| [plan.md](plan.md) | The original product brief |
+See [plan.md](plan.md) for the original product brief.
 
 ## License
 

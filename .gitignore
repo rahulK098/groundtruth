@@ -1,27 +1,13 @@
 # ---------------------------------------------------------------------------
-# ECC project-scoped install (~703 generated files).
-# Committing it wholesale would bury the project in a reader's first impression.
-# We track only the three things we author ourselves.
+# Agent harness config and project documentation are deliberately NOT published.
 #
-# Order matters: exclude the CONTENTS (.claude/*), not the directory (.claude/).
-# Git cannot re-include a path inside an excluded directory, so `.claude/`
-# would make every negation below silently dead.
+# Both exist locally and are used during development; they are simply kept out
+# of the public repository. They were also purged from git history, so adding
+# them back here prevents them silently returning in a later commit.
 # ---------------------------------------------------------------------------
-.claude/*
-!.claude/settings.json
-!.claude/hooks/
-.claude/hooks/*
-!.claude/hooks/py-gate.js
-!.claude/skills/
-.claude/skills/*
-!.claude/skills/golden-set-review/
-!.claude/skills/eval-protocol/
-
-# Personal, machine-specific, or runtime state — never shared.
-.claude/settings.local.json
-.claude/worktrees/
-.claude/scheduled_tasks.lock
+.claude/
 .observer-tmp/
+docs/
 
 # ---------------------------------------------------------------------------
 # Python
