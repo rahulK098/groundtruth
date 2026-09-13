@@ -1,0 +1,8 @@
+{
+  "content_sha256": "89139a646b6ed236faef811ac326edb9fe7b298a8782e3a12d4e35ff13db5660",
+  "corpus_id": "courtlistener-scotus-1990-01-01..2020-12-31-n150",
+  "doc_count": 150,
+  "normalizer_version": "1",
+  "retrieved_at": "",
+  "source": "courtlistener-v4"
+}
