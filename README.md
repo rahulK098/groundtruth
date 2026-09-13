@@ -3,8 +3,8 @@
 > A regression-gated evaluation harness that **proves** a retrieval change was an
 > improvement — instead of asserting it.
 
-**Status: in progress (Phases 0–3 of 12 complete).** The corpus, chunking and
-the committed embedding cache are in place; retrieval, scoring and the gate are
+**Status: in progress (Phases 0–4 of 12 complete).** The corpus, chunking, the
+committed embedding cache and retrieval are in place; scoring and the gate are
 not yet implemented. **No results have been measured yet**, and this README will
 not carry a results table until they are. See [Build status](#build-status).
 
@@ -50,7 +50,7 @@ failure this project argues against.
 | 1 — Config model + content hashing | **done** — 66 tests, 97% coverage |
 | 2 — Corpus ingest + chunking | **done** — 150 opinions, 7.4M chars |
 | 3 — Embedding cache + guards | **done** — 11,028 vectors, 8.5 MB |
-| 4 — Retrieval (NumPy + BM25 + RRF) | not started |
+| 4 — Retrieval (NumPy + BM25 + RRF) | **done** — 0.6 ms dense, 0.7 ms lexical |
 | 5 — Golden set review (100 pairs) | not started |
 | 6 — Scorers | not started |
 | 7 — First numbers, freeze baseline | not started |
@@ -64,13 +64,23 @@ API key, no model download, no GPU, no network.
 
 ```bash
 uv sync --frozen --extra dev     # ~50 packages, no torch
-uv run pytest                    # 275 tests
+uv run pytest                    # 405 tests
 uv run gt --help
 ```
 
 That works offline because the corpus snapshot and the embedding cache are
 **committed** (11 MB total), and the model libraries live in an optional extra
 the default install never pulls.
+
+To run a single query by hand, add the `models` extra — an arbitrary query is by
+definition not in the committed cache, so its vector has to be computed:
+
+```bash
+uv run gt search "standard for granting summary judgment" --config hybrid_512
+```
+
+Passage vectors still come from the cache; only the query is embedded. The gate
+uses the cache-only embedder, which cannot compute anything at all.
 
 ### Regenerating the committed artifacts
 
@@ -138,10 +148,11 @@ Stated up front, because a harness that hides its own weaknesses is worthless:
   run-to-run σ is published alongside the metric.
 - **Single annotator**, so there is no inter-annotator agreement statistic — only
   a published self-consistency rate.
-- **150 documents, not 500.** Real Supreme Court opinions average ~15,000
-  tokens, so 500 would mean a ~36 MB embedding cache and git-LFS — which breaks
-  one-command reproduction. The chunk count (14,712) is what governs retrieval
-  difficulty, and it is unchanged.
+- **150 documents, not 500.** Real Supreme Court opinions are long — measured
+  over all 150, a mean of 11,269 tokens — so 500 would mean a ~30 MB embedding
+  cache and git-LFS, which breaks one-command reproduction. What governs
+  retrieval difficulty is the chunk count: **11,085** across both chunk
+  configurations, or 11,028 distinct strings after de-duplication.
 
 ## Out of scope
 

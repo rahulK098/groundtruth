@@ -10,6 +10,7 @@ import typer
 
 from groundtruth.cli import cache as cache_commands
 from groundtruth.cli import corpus as corpus_commands
+from groundtruth.cli import search as search_commands
 
 app = typer.Typer(
     name="gt",
@@ -20,6 +21,9 @@ app = typer.Typer(
 
 app.add_typer(corpus_commands.app, name="corpus", help="Fetch and verify the corpus snapshot.")
 app.add_typer(cache_commands.app, name="cache", help="Build and verify the embedding cache.")
+# A single command, not a group -- registered directly rather than wrapped in
+# a sub-Typer, which would demand a subcommand after `gt search`.
+app.command("search")(search_commands.search)
 
 
 @app.command()
