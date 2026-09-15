@@ -1,3 +1,7 @@
+<p align="center">
+  <img src="assets/logo.png" alt="ClaimGuard logo" width="300">
+</p>
+
 # Groundtruth
 
 > A regression-gated evaluation harness that **proves** a retrieval change was an
