@@ -157,8 +157,7 @@ class Provenance(FrozenModel):
             )
         if self.review_action == "accepted" and self.edited_fields:
             raise ValueError(
-                f"review_action 'accepted' must not list edited_fields, got "
-                f"{self.edited_fields!r}"
+                f"review_action 'accepted' must not list edited_fields, got {self.edited_fields!r}"
             )
         return self
 
@@ -267,7 +266,7 @@ class GoldenSet(FrozenModel):
 
     def counts_by_category(self) -> dict[str, int]:
         """Query count per category, including categories with none."""
-        counts = dict.fromkeys(CATEGORIES, 0)
+        counts: dict[str, int] = dict.fromkeys(CATEGORIES, 0)
         for pair in self.pairs:
             counts[pair.category] += 1
         return counts

@@ -55,7 +55,7 @@ failure this project argues against.
 | 2 — Corpus ingest + chunking | **done** — 150 opinions, 7.4M chars |
 | 3 — Embedding cache + guards | **done** — 11,028 vectors, 8.5 MB |
 | 4 — Retrieval (NumPy + BM25 + RRF) | **done** — 0.6 ms dense, 0.7 ms lexical |
-| 5 — Golden set review (100 pairs) | not started |
+| 5 — Golden set review (100 pairs) | **in progress** — `gt golden` tooling done; generation and human review pending |
 | 6 — Scorers | not started |
 | 7 — First numbers, freeze baseline | not started |
 | 8 — Regression gate + demos | not started |

@@ -15,11 +15,11 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping, Sequence
 from dataclasses import dataclass
-from typing import Any, Final
+from typing import Final
 
 import yaml
 
-from groundtruth.golden.candidates import Candidate, ReviewDecision, query_id_for
+from groundtruth.golden.candidates import Candidate, ReviewAction, ReviewDecision, query_id_for
 from groundtruth.golden.models import CATEGORIES, GoldenPair, Provenance, RelevanceLabel
 from groundtruth.golden.overlap import EchoSignal, echo_signal
 from groundtruth.golden.proposals import RejectedProposal, resolve_quote
@@ -194,7 +194,7 @@ def from_editable(text: str, candidate: Candidate, passage: SampledPassage) -> C
     return candidate.model_copy(update={"query": query, "category": category, "labels": labels})
 
 
-def _label_from_edit(span: Any, passage: SampledPassage) -> RelevanceLabel:
+def _label_from_edit(span: object, passage: SampledPassage) -> RelevanceLabel:
     if not isinstance(span, Mapping):
         raise ReviewError(f"each span must be a mapping with 'gain' and 'quote', got {span!r}")
 
@@ -255,7 +255,7 @@ def accept(
     """
     final = revised or candidate
     changed = edited_fields(candidate, final) if revised is not None else ()
-    action = "edit" if changed else "accept"
+    action: ReviewAction = "edit" if changed else "accept"
 
     pair = GoldenPair(
         query_id=query_id_for(candidate.candidate_id),

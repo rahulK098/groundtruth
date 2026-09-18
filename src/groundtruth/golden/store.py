@@ -27,7 +27,7 @@ import json
 import os
 from collections.abc import Iterable, Sequence
 from pathlib import Path
-from typing import Any, Final, TypeVar
+from typing import Any, Final
 
 from pydantic import BaseModel, ValidationError
 
@@ -38,8 +38,6 @@ GOLDEN_SET_FILENAME: Final[str] = "golden_set.jsonl"
 CANDIDATES_FILENAME: Final[str] = "candidates.jsonl"
 REVIEW_LOG_FILENAME: Final[str] = "review_log.jsonl"
 
-ModelT = TypeVar("ModelT", bound=BaseModel)
-
 
 class GoldenStoreError(Exception):
     """A golden-set file could not be read or written."""
@@ -49,7 +47,9 @@ def _to_line(model: BaseModel) -> str:
     return json.dumps(model.model_dump(mode="json"), sort_keys=True, ensure_ascii=False)
 
 
-def _read_models(path: Path, model: type[ModelT], *, kind: str) -> tuple[ModelT, ...]:
+def _read_models[ModelT: BaseModel](
+    path: Path, model: type[ModelT], *, kind: str
+) -> tuple[ModelT, ...]:
     if not path.is_file():
         return ()
 
@@ -62,7 +62,9 @@ def _read_models(path: Path, model: type[ModelT], *, kind: str) -> tuple[ModelT,
         except (json.JSONDecodeError, ValidationError) as exc:
             # Naming the file and line matters more here than anywhere else:
             # a hand-edited review log is how this breaks in practice.
-            raise GoldenStoreError(f"{path.name} line {lineno} is not a valid {kind}: {exc}") from exc
+            raise GoldenStoreError(
+                f"{path.name} line {lineno} is not a valid {kind}: {exc}"
+            ) from exc
     return tuple(out)
 
 
@@ -90,9 +92,7 @@ def append_decision(decision: ReviewDecision, directory: Path) -> None:
 
 
 def read_review_log(directory: Path) -> tuple[ReviewDecision, ...]:
-    return _read_models(
-        directory / REVIEW_LOG_FILENAME, ReviewDecision, kind="review decision"
-    )
+    return _read_models(directory / REVIEW_LOG_FILENAME, ReviewDecision, kind="review decision")
 
 
 # --- candidates -------------------------------------------------------------

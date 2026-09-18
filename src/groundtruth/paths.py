@@ -38,3 +38,7 @@ def corpus_dir() -> Path:
 
 def cache_dir() -> Path:
     return project_root() / "data" / "cache"
+
+
+def golden_dir() -> Path:
+    return project_root() / "data" / "golden"

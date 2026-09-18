@@ -11,6 +11,8 @@ from __future__ import annotations
 import pytest
 
 from groundtruth.golden.candidates import Candidate, query_id_for
+from groundtruth.golden.models import RelevanceLabel
+from groundtruth.golden.overlap import echo_signal
 from groundtruth.golden.review import (
     ReviewContext,
     ReviewError,
@@ -25,8 +27,6 @@ from groundtruth.golden.review import (
     source_passage,
     to_editable,
 )
-from groundtruth.golden.models import RelevanceLabel
-from groundtruth.golden.overlap import echo_signal
 
 HOLDING = "Summary judgment is appropriate only where no genuine dispute exists."
 OTHER = "The nonmoving party must set forth specific facts showing an issue."
@@ -200,7 +200,9 @@ class TestEditRoundTrip:
     def test_an_emptied_query_is_refused(self):
         cand = candidate()
         with pytest.raises(ReviewError, match="no query"):
-            from_editable("query: ''\ncategory: factual-lookup\nspans: []\n", cand, passage_of(cand))
+            from_editable(
+                "query: ''\ncategory: factual-lookup\nspans: []\n", cand, passage_of(cand)
+            )
 
     def test_removing_every_span_is_refused(self):
         cand = candidate()

@@ -71,7 +71,10 @@ class GenerationReport:
         return counts
 
 
-def _client(api_key: str) -> Any:
+# ``Any`` at this one boundary, deliberately: the SDK is an optional extra,
+# so its types cannot be imported at module scope without making `gt --help`
+# depend on it.
+def _client(api_key: str) -> Any:  # noqa: ANN401
     try:
         import anthropic
     except ModuleNotFoundError as exc:  # pragma: no cover - import guard
@@ -84,7 +87,7 @@ def _client(api_key: str) -> Any:
     return anthropic.Anthropic(api_key=api_key)
 
 
-def _proposal_from_response(response: Any) -> dict[str, Any] | None:
+def _proposal_from_response(response: Any) -> dict[str, Any] | None:  # noqa: ANN401
     """Pull the forced tool call out of a response, or None if there is none."""
     for block in response.content:
         if getattr(block, "type", None) == "tool_use":
@@ -134,7 +137,9 @@ def generate_candidates(
         raw = _proposal_from_response(response)
         if raw is None:
             rejected.append(
-                RejectedProposal(passage.passage_id, "no-tool-call", "the model returned no proposal")
+                RejectedProposal(
+                    passage.passage_id, "no-tool-call", "the model returned no proposal"
+                )
             )
         else:
             outcome = candidate_from_proposal(

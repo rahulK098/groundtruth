@@ -15,8 +15,8 @@ from pydantic import ValidationError
 from groundtruth.golden.candidates import Candidate, ReviewDecision, materialize
 from groundtruth.golden.models import GoldenPair, Provenance, RelevanceLabel
 from groundtruth.golden.store import (
-    GoldenStoreError,
     REVIEW_LOG_FILENAME,
+    GoldenStoreError,
     append_candidates,
     append_decision,
     read_candidates,

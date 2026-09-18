@@ -30,8 +30,7 @@ PASSAGE = SampledPassage(
 
 def documents(count: int = 5, length: int = 8000) -> tuple[Document, ...]:
     return tuple(
-        Document(doc_id=f"cl-{i:03d}", text=f"opinion {i} " * (length // 10))
-        for i in range(count)
+        Document(doc_id=f"cl-{i:03d}", text=f"opinion {i} " * (length // 10)) for i in range(count)
     )
 
 
@@ -168,7 +167,9 @@ class TestRejection:
         # A span that size is the passage. Any chunk overlapping it satisfies
         # span-level Recall, which would lift every configuration at once.
         long_text = "x" * (MAX_QUOTE_CHARS + 50)
-        passage = SampledPassage(doc_id="cl-1", char_start=0, char_end=len(long_text), text=long_text)
+        passage = SampledPassage(
+            doc_id="cl-1", char_start=0, char_end=len(long_text), text=long_text
+        )
         rejected = make(proposal(spans=[{"quote": long_text, "gain": 3}]), passage)
         assert isinstance(rejected, RejectedProposal)
         assert rejected.code == "quote-too-long"
