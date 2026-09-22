@@ -100,16 +100,50 @@ class TestHelp:
 
 
 class TestGenerateCredentials:
-    def test_missing_key_exits_non_zero_with_guidance(
+    @pytest.mark.parametrize(
+        "provider, variable",
+        [
+            ("anthropic", "ANTHROPIC_API_KEY"),
+            ("azure", "AZURE_OPENAI_API_KEY"),
+            ("groq", "GROQ_API_KEY"),
+        ],
+    )
+    def test_missing_key_exits_non_zero_naming_the_variable(
+        self,
+        tmp_path: Path,
+        monkeypatch,
+        corpus: Path,
+        golden: Path,
+        provider: str,
+        variable: str,
+    ):
+        monkeypatch.chdir(tmp_path)
+        for name in (
+            "ANTHROPIC_API_KEY",
+            "AZURE_OPENAI_API_KEY",
+            "AZURE_OPENAI_KEY",
+            "GROQ_API_KEY",
+        ):
+            monkeypatch.delenv(name, raising=False)
+
+        result = runner.invoke(
+            app,
+            ["golden", "generate", "--count", "1", "--provider", provider, *common(golden, corpus)],
+        )
+        assert result.exit_code == 1
+        assert variable in result.output
+        assert not (golden / CANDIDATES_FILENAME).exists()
+
+    def test_an_unknown_provider_lists_the_known_ones(
         self, tmp_path: Path, monkeypatch, corpus: Path, golden: Path
     ):
         monkeypatch.chdir(tmp_path)
-        monkeypatch.delenv("ANTHROPIC_API_KEY", raising=False)
-
-        result = runner.invoke(app, ["golden", "generate", "--count", "1", *common(golden, corpus)])
+        result = runner.invoke(
+            app,
+            ["golden", "generate", "--provider", "nope", *common(golden, corpus)],
+        )
         assert result.exit_code == 1
-        assert "ANTHROPIC_API_KEY" in result.output
-        assert not (golden / CANDIDATES_FILENAME).exists()
+        assert "azure" in result.output
 
     def test_refuses_to_overwrite_existing_candidates(
         self, monkeypatch, corpus: Path, golden: Path

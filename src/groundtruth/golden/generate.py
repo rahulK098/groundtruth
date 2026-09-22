@@ -1,17 +1,24 @@
-"""Candidate generation. The only module here that talks to Anthropic.
+"""Candidate generation.
+
+The only module here that talks to a model -- and it does so through the
+vendor-neutral provider protocol in :mod:`groundtruth.llm`, so Azure, Groq,
+Gemini, a local Ollama or Anthropic all drive it unchanged.
 
 Everything that can be wrong about a proposal -- quote resolution, category
 validation, span sizing -- lives in :mod:`groundtruth.golden.proposals` and is
-tested without a key. This file is the API call and nothing else, which is why
-it is excluded from coverage honestly rather than padded with a mock-only test.
+tested without a key. This file is the call loop and nothing else.
 
-Two details worth knowing:
+Three details worth knowing:
 
 **The recorded model is the one the API says ran**, taken from the response
 rather than from the request. Asking for an alias and recording the alias
 would put an unpinned name in the provenance of every candidate -- exactly the
 drift that the pinned model revisions elsewhere in this project exist to
 prevent.
+
+**One provider per run, chosen explicitly.** There is no fallback chain: a run
+answered by whichever vendor happened to be reachable would not be
+reproducible, and nothing in the record would mark the mixture as unintended.
 
 **Generation proposes; it never labels.** Nothing written here reaches the
 golden set without a human decision (ADR-0009).
@@ -22,24 +29,21 @@ from __future__ import annotations
 from collections.abc import Callable, Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
-from typing import Any, Final
+from typing import Final
 
 from groundtruth.golden.candidates import Candidate
 from groundtruth.golden.prompts import (
     PROMPT_VERSION,
-    PROPOSAL_TOOL,
+    PROPOSAL_TOOL_SPEC,
     SYSTEM_PROMPT,
     user_message,
 )
 from groundtruth.golden.proposals import RejectedProposal, candidate_from_proposal
 from groundtruth.golden.sampling import SampledPassage
+from groundtruth.llm.models import ChatProvider, LLMError
 
-#: An alias, resolved to a dated snapshot by the API. The resolved id is what
-#: gets recorded, so the alias here never reaches a candidate's provenance.
-DEFAULT_MODEL: Final[str] = "claude-sonnet-5"
-
-#: temperature=0 for the usual reason, with the usual caveat: Anthropic has no
-#: seed parameter, so this reduces variation rather than eliminating it. What
+#: temperature=0 for the usual reason, with the usual caveat: no vendor here
+#: offers a seed, so this reduces variation rather than eliminating it. What
 #: makes the candidate set reproducible is that it is committed, not that the
 #: call is deterministic (ADR-0011).
 TEMPERATURE: Final[float] = 0.0
@@ -49,14 +53,11 @@ MAX_TOKENS: Final[int] = 1200
 ProgressCallback = Callable[[int, int], None]
 
 
-class JudgeExtraNotInstalledError(Exception):
-    """The `judge` extra, which provides the Anthropic SDK, is not installed."""
-
-
 @dataclass(frozen=True, slots=True)
 class GenerationReport:
     """What a generation run produced, including what it threw away."""
 
+    provider: str
     model: str
     prompt_version: str
     passages: int
@@ -71,35 +72,10 @@ class GenerationReport:
         return counts
 
 
-# ``Any`` at this one boundary, deliberately: the SDK is an optional extra,
-# so its types cannot be imported at module scope without making `gt --help`
-# depend on it.
-def _client(api_key: str) -> Any:  # noqa: ANN401
-    try:
-        import anthropic
-    except ModuleNotFoundError as exc:  # pragma: no cover - import guard
-        raise JudgeExtraNotInstalledError(
-            "candidate generation needs the Anthropic SDK, which is not "
-            "installed by default:\n\n"
-            "    uv sync --frozen --extra dev --extra judge\n\n"
-            "It is optional because nothing in the gate path calls it."
-        ) from exc
-    return anthropic.Anthropic(api_key=api_key)
-
-
-def _proposal_from_response(response: Any) -> dict[str, Any] | None:  # noqa: ANN401
-    """Pull the forced tool call out of a response, or None if there is none."""
-    for block in response.content:
-        if getattr(block, "type", None) == "tool_use":
-            return dict(block.input)
-    return None
-
-
 def generate_candidates(
     passages: Sequence[SampledPassage],
+    provider: ChatProvider,
     *,
-    api_key: str,
-    model: str = DEFAULT_MODEL,
     on_progress: ProgressCallback | None = None,
 ) -> tuple[tuple[Candidate, ...], GenerationReport]:
     """Propose one candidate per passage.
@@ -107,35 +83,37 @@ def generate_candidates(
     Returns the candidates **and** every rejection, because the rejection rate
     is part of the evidence the report quotes.
     """
-    client = _client(api_key)
     generated_at = datetime.now(UTC).isoformat()
 
     candidates: list[Candidate] = []
     rejected: list[RejectedProposal] = []
-    resolved_model = model
+    resolved_model = provider.model
 
     for index, passage in enumerate(passages, start=1):
-        response = client.messages.create(
-            model=model,
-            max_tokens=MAX_TOKENS,
-            temperature=TEMPERATURE,
-            system=SYSTEM_PROMPT,
-            tools=[PROPOSAL_TOOL],
-            tool_choice={"type": "tool", "name": PROPOSAL_TOOL["name"]},
-            messages=[
-                {
-                    "role": "user",
-                    "content": user_message(
-                        passage.doc_id, passage.char_start, passage.char_end, passage.text
-                    ),
-                }
-            ],
-        )
-        # The concrete dated snapshot, not the alias that was requested.
-        resolved_model = getattr(response, "model", model)
+        try:
+            completion = provider.complete(
+                system=SYSTEM_PROMPT,
+                user=user_message(
+                    passage.doc_id, passage.char_start, passage.char_end, passage.text
+                ),
+                tool=PROPOSAL_TOOL_SPEC,
+                max_tokens=MAX_TOKENS,
+                temperature=TEMPERATURE,
+            )
+        except LLMError as exc:
+            # Recorded rather than raised: one passage that trips a content
+            # filter or a transient 500 should not discard the 80 candidates
+            # already generated. A systemic failure shows up as a run whose
+            # rejection counts are almost entirely this code.
+            rejected.append(RejectedProposal(passage.passage_id, "request-failed", str(exc)))
+            if on_progress is not None:
+                on_progress(index, len(passages))
+            continue
 
-        raw = _proposal_from_response(response)
-        if raw is None:
+        # The concrete snapshot the API reports, not the alias requested.
+        resolved_model = completion.model
+
+        if completion.tool_input is None:
             rejected.append(
                 RejectedProposal(
                     passage.passage_id, "no-tool-call", "the model returned no proposal"
@@ -143,7 +121,7 @@ def generate_candidates(
             )
         else:
             outcome = candidate_from_proposal(
-                raw,
+                completion.tool_input,
                 passage,
                 candidate_id=f"c-{index:04d}",
                 generator_model=resolved_model,
@@ -159,6 +137,7 @@ def generate_candidates(
             on_progress(index, len(passages))
 
     report = GenerationReport(
+        provider=provider.name,
         model=resolved_model,
         prompt_version=PROMPT_VERSION,
         passages=len(passages),

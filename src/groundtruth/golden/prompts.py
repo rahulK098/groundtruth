@@ -14,6 +14,8 @@ from __future__ import annotations
 
 from typing import Any, Final
 
+from groundtruth.llm.models import ToolSpec
+
 PROMPT_VERSION: Final[str] = "golden-candidate-v1"
 
 CATEGORY_GUIDE: Final[str] = """\
@@ -121,6 +123,16 @@ PROPOSAL_TOOL: Final[dict[str, Any]] = {
         "required": [],
     },
 }
+
+
+#: The same tool in vendor-neutral terms. `PROPOSAL_TOOL` above keeps
+#: Anthropic's `input_schema` spelling; each provider wraps this one in
+#: whatever shape its own API documents.
+PROPOSAL_TOOL_SPEC: Final[ToolSpec] = ToolSpec(
+    name=PROPOSAL_TOOL["name"],
+    description=PROPOSAL_TOOL["description"],
+    schema=PROPOSAL_TOOL["input_schema"],
+)
 
 
 def user_message(doc_id: str, char_start: int, char_end: int, passage: str) -> str:

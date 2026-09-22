@@ -27,6 +27,7 @@ from groundtruth.golden.authoring import (
     to_template,
 )
 from groundtruth.golden.candidates import Candidate, ReviewDecision
+from groundtruth.golden.generate import generate_candidates
 from groundtruth.golden.review import (
     ReviewContext,
     ReviewError,
@@ -57,8 +58,10 @@ from groundtruth.golden.store import (
     review_summary,
 )
 from groundtruth.golden.validation import errors, validate
+from groundtruth.llm.models import ProviderNotConfiguredError
+from groundtruth.llm.registry import PROVIDER_NAMES, build_provider
 from groundtruth.paths import corpus_dir, golden_dir
-from groundtruth.settings import MissingCredentialError, Settings
+from groundtruth.settings import Settings
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -102,8 +105,13 @@ def _fail(message: str) -> typer.Exit:
 @app.command("generate")
 def generate(
     count: int = typer.Option(120, help="Passages to sample, one proposal each."),
+    provider: str = typer.Option(
+        "anthropic",
+        envvar="GT_LLM_PROVIDER",
+        help=f"One of: {', '.join(PROVIDER_NAMES)}.",
+    ),
     model: str = typer.Option(
-        None, help="Anthropic model alias. Defaults to the module's pinned choice."
+        "", help="Model id, or the deployment name on Azure. Defaults per provider."
     ),
     window: int = typer.Option(DEFAULT_WINDOW_CHARS, help="Passage window in characters."),
     seed: int = typer.Option(DEFAULT_SEED, help="Sampling seed."),
@@ -112,8 +120,12 @@ def generate(
 ) -> None:
     """Propose candidates from sampled passages. Proposals only, never labels.
 
-    Requires ANTHROPIC_API_KEY and the `judge` extra. This is the only golden
-    command that calls a model; review, rebuild and validate never do.
+    Needs credentials for the chosen provider and nothing else -- no extra to
+    install. This is the only golden command that calls a model; review,
+    rebuild and validate never do.
+
+    There is deliberately no fallback to another provider: a run answered by
+    whichever vendor happened to be reachable would not be reproducible.
     """
     target = directory or golden_dir()
     if (target / CANDIDATES_FILENAME).exists():
@@ -126,34 +138,26 @@ def generate(
         )
 
     try:
-        api_key = Settings().require_anthropic_key()
-    except MissingCredentialError as exc:
+        chat = build_provider(provider, Settings(), model=model or None)
+    except ProviderNotConfiguredError as exc:
         raise _fail(str(exc)) from exc
-
-    # Imported here so `gt --help` works without the `judge` extra.
-    from groundtruth.golden.generate import (
-        DEFAULT_MODEL,
-        JudgeExtraNotInstalledError,
-        generate_candidates,
-    )
 
     documents = _load_corpus(corpus)
     passages = sample_passages(
         tuple(documents.values()), count=count, window_chars=window, seed=seed
     )
-    typer.echo(f"sampled {len(passages)} passages from {len(documents)} documents")
+    typer.echo(
+        f"sampled {len(passages)} passages from {len(documents)} documents\n"
+        f"provider: {chat.name}  model: {chat.model}"
+    )
 
-    try:
-        candidates, report = generate_candidates(
-            passages, api_key=api_key, model=model or DEFAULT_MODEL, on_progress=_progress
-        )
-    except JudgeExtraNotInstalledError as exc:
-        raise _fail(str(exc)) from exc
+    candidates, report = generate_candidates(passages, chat, on_progress=_progress)
 
     append_candidates(candidates, target)
 
     lines = [
         f"\nwrote {report.accepted} candidates to {target / CANDIDATES_FILENAME}",
+        f"  provider : {report.provider}",
         f"  model    : {report.model}",
         f"  prompt   : {report.prompt_version}",
         f"  rejected : {len(report.rejected)}",
