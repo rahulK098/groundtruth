@@ -27,7 +27,7 @@ from groundtruth.golden.authoring import (
     to_template,
 )
 from groundtruth.golden.candidates import Candidate, ReviewDecision
-from groundtruth.golden.generate import generate_candidates
+from groundtruth.golden.generate import GenerationReport, generate_candidates
 from groundtruth.golden.review import (
     ReviewContext,
     ReviewError,
@@ -44,6 +44,7 @@ from groundtruth.golden.sampling import (
     DEFAULT_SEED,
     DEFAULT_WINDOW_CHARS,
     SampledPassage,
+    SamplingError,
     sample_passages,
 )
 from groundtruth.golden.store import (
@@ -143,9 +144,12 @@ def generate(
         raise _fail(str(exc)) from exc
 
     documents = _load_corpus(corpus)
-    passages = sample_passages(
-        tuple(documents.values()), count=count, window_chars=window, seed=seed
-    )
+    try:
+        passages = sample_passages(
+            tuple(documents.values()), count=count, window_chars=window, seed=seed
+        )
+    except SamplingError as exc:
+        raise _fail(f"cannot sample passages: {exc}") from exc
     typer.echo(
         f"sampled {len(passages)} passages from {len(documents)} documents\n"
         f"provider: {chat.name}  model: {chat.model}"
@@ -153,10 +157,17 @@ def generate(
 
     candidates, report = generate_candidates(passages, chat, on_progress=_progress)
 
-    append_candidates(candidates, target)
+    if candidates:
+        append_candidates(candidates, target)
+        written = f"\nwrote {report.accepted} candidates to {target / CANDIDATES_FILENAME}"
+    else:
+        # Deliberately no file. An empty candidates.jsonl would trip the
+        # overwrite guard above and refuse the corrected re-run -- turning a
+        # misconfigured endpoint into a second, unrelated-looking problem.
+        written = "\nwrote no candidates, so no file was created"
 
     lines = [
-        f"\nwrote {report.accepted} candidates to {target / CANDIDATES_FILENAME}",
+        written,
         f"  provider : {report.provider}",
         f"  model    : {report.model}",
         f"  prompt   : {report.prompt_version}",
@@ -164,7 +175,33 @@ def generate(
     ]
     for code, n in sorted(report.rejection_counts.items()):
         lines.append(f"    {code:<18} {n}")
+    lines += _rejection_examples(report)
     typer.echo("\n".join(lines))
+
+    if not candidates:
+        raise typer.Exit(code=1)
+
+
+def _rejection_examples(report: GenerationReport, limit: int = 3) -> list[str]:
+    """Show the distinct reasons behind the counts.
+
+    A bare tally is unactionable: "request-failed 120" does not say whether
+    the deployment name is wrong, the key expired or the endpoint is not an
+    Azure OpenAI resource at all -- and the answer is sitting in the detail.
+    """
+    seen: dict[str, str] = {}
+    for rejection in report.rejected:
+        seen.setdefault(rejection.detail, rejection.code)
+        if len(seen) >= limit:
+            break
+    if not seen:
+        return []
+
+    lines = ["", "  why:"]
+    lines += [f"    [{code}] {detail}" for detail, code in seen.items()]
+    if len(report.rejected) > len(seen):
+        lines.append(f"    ... and {len(report.rejected) - len(seen)} more")
+    return lines
 
 
 # --- add --------------------------------------------------------------------

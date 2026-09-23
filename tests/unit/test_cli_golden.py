@@ -28,9 +28,11 @@ from groundtruth.golden.store import (
     GOLDEN_SET_FILENAME,
     REVIEW_LOG_FILENAME,
     append_candidates,
+    read_candidates,
     read_golden_set,
     read_review_log,
 )
+from groundtruth.llm.models import Completion, ProviderRequestError
 from tests.fixtures.mini_corpus import mini_documents
 
 runner = CliRunner()
@@ -145,6 +147,112 @@ class TestGenerateCredentials:
         assert result.exit_code == 1
         assert "azure" in result.output
 
+
+@pytest.fixture
+def samplable_corpus(tmp_path: Path) -> Path:
+    """A corpus whose documents clear the sampler's minimum length.
+
+    The mini opinions are ~1.2k characters, below the 2,000 the sampler
+    requires before it will treat a document as carrying a holding worth
+    asking about, so they cannot drive `generate` at all.
+    """
+    directory = tmp_path / "big-corpus"
+    documents = tuple(
+        # Padded with DISTINCT filler, never by repeating the opinion: a
+        # doubled document makes every quote in it ambiguous, which is a
+        # property of the fixture rather than of anything under test.
+        doc.model_copy(
+            update={
+                "text": doc.text
+                + "\n\n"
+                + "\n".join(
+                    f"Paragraph {n} of the appendix to {doc.doc_id}, which is filler." * 3
+                    for n in range(40)
+                )
+            }
+        )
+        for doc in mini_documents()
+    )
+    write_snapshot(documents, directory, corpus_id="big", source="test")
+    return directory
+
+
+class TestGenerateFailureIsActionable:
+    """A run where every call failed must say WHY, and must not block the retry.
+
+    Both properties were missing on the first Azure attempt: 120 failures
+    reported as a bare count, and an empty candidates.jsonl left behind that
+    then refused the corrected re-run.
+    """
+
+    def stub(self, monkeypatch, exc: Exception) -> None:
+        class FailingProvider:
+            name = "azure"
+            model = "chat"
+
+            def complete(self, **_: object) -> object:
+                raise exc
+
+        monkeypatch.setattr(golden_commands, "build_provider", lambda *a, **k: FailingProvider())
+
+    def test_the_underlying_error_is_printed_not_just_counted(
+        self, monkeypatch, samplable_corpus: Path, golden: Path
+    ):
+        self.stub(monkeypatch, ProviderRequestError("azure: HTTP 404: DeploymentNotFound"))
+
+        result = runner.invoke(
+            app, ["golden", "generate", "--count", "2", *common(golden, samplable_corpus)]
+        )
+        assert "request-failed" in result.output
+        assert "DeploymentNotFound" in result.output
+
+    def test_a_run_that_produced_nothing_leaves_no_file_to_block_the_retry(
+        self, monkeypatch, samplable_corpus: Path, golden: Path
+    ):
+        self.stub(monkeypatch, ProviderRequestError("azure: HTTP 401: denied"))
+
+        result = runner.invoke(
+            app, ["golden", "generate", "--count", "2", *common(golden, samplable_corpus)]
+        )
+        assert result.exit_code == 1
+        assert not (golden / CANDIDATES_FILENAME).exists()
+
+    def test_a_partial_run_still_writes_what_it_got(
+        self, monkeypatch, samplable_corpus: Path, golden: Path
+    ):
+        # One failure among several must not discard the successes.
+        calls = {"n": 0}
+
+        class FlakyProvider:
+            name = "azure"
+            model = "chat"
+
+            def complete(self, **kwargs: object) -> Completion:
+                calls["n"] += 1
+                if calls["n"] == 1:
+                    raise ProviderRequestError("azure: HTTP 500: transient")
+                passage = str(kwargs["user"]).split("---")[1]
+                quote = passage.strip()[:120]
+                return Completion(
+                    model="gpt-4o-2024-11-20",
+                    tool_input={
+                        "query": "what standard did the court apply here",
+                        "category": "factual-lookup",
+                        "spans": [{"quote": quote, "gain": 3}],
+                    },
+                )
+
+        monkeypatch.setattr(golden_commands, "build_provider", lambda *a, **k: FlakyProvider())
+
+        result = runner.invoke(
+            app, ["golden", "generate", "--count", "3", *common(golden, samplable_corpus)]
+        )
+        assert result.exit_code == 0, result.output
+        assert len(read_candidates(golden)) == 2
+        assert "request-failed" in result.output
+
+
+class TestGenerateGuards:
     def test_refuses_to_overwrite_existing_candidates(
         self, monkeypatch, corpus: Path, golden: Path
     ):
