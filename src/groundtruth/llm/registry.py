@@ -35,7 +35,7 @@ from groundtruth.settings import Settings
 #: name -> (settings prefix, base URL, default model, env var to name in errors)
 _OPENAI_FAMILY: Final[dict[str, tuple[str, str, str]]] = {
     "openai": ("openai", "https://api.openai.com/v1", "gpt-4o"),
-    "groq": ("groq", "https://api.groq.com/openai/v1", "llama-3.3-70b-versatile"),
+    "groq": ("groq", "https://api.groq.com/openai/v1", "qwen/qwen3.8-27b"),
     "openrouter": (
         "openrouter",
         "https://openrouter.ai/api/v1",

@@ -21,7 +21,7 @@ from groundtruth.llm.models import (
 )
 
 BASE_URL: Final[str] = "https://generativelanguage.googleapis.com/v1beta"
-DEFAULT_MODEL: Final[str] = "gemini-2.5-flash"
+DEFAULT_MODEL: Final[str] = "gemini-3.6-flash"
 
 
 class GeminiProvider:

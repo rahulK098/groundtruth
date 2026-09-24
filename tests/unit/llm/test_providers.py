@@ -297,7 +297,14 @@ class TestAzure:
         with pytest.raises(ProviderRequestError, match="azure"):
             complete(provider)
 
-    def test_a_non_auth_failure_does_not_burn_the_second_key(self):
+    def test_a_non_auth_failure_does_not_burn_the_second_key(self, monkeypatch: pytest.MonkeyPatch):
+        # A 500 is transient-retried (same key, see http.py) before Azure's
+        # own key-rotation logic ever sees it -- a server that is overloaded
+        # is overloaded regardless of which key asks, so there is nothing for
+        # a second key to fix. Real sleeping is patched out; the count of
+        # attempts on "primary" is http.py's default and not this test's
+        # concern, only that "secondary" is never touched.
+        monkeypatch.setattr("time.sleep", lambda seconds: None)
         seen: list[httpx.Request] = []
 
         def handler(request: httpx.Request) -> httpx.Response:
@@ -313,7 +320,8 @@ class TestAzure:
         )
         with pytest.raises(ProviderRequestError):
             complete(provider)
-        assert len(seen) == 1
+        assert seen
+        assert {r.headers["api-key"] for r in seen} == {"primary"}
 
     def test_endpoint_trailing_slash_does_not_double_up(self):
         seen, handler = capture()
