@@ -18,12 +18,13 @@ loud failure naming the exact regeneration command is strictly better.
 from __future__ import annotations
 
 from collections.abc import Sequence
+from pathlib import Path
 
 import numpy as np
 
 from groundtruth.embedding.hashing import embedding_key
 from groundtruth.embedding.protocol import Embedder
-from groundtruth.embedding.store import LoadedStore
+from groundtruth.embedding.store import LoadedStore, read_store, store_dir
 
 
 class EmbeddingCacheMissError(Exception):
@@ -91,6 +92,16 @@ class CachedOnlyEmbedder:
             )
 
         return np.stack([self._store.vector_for(key) for key in keys])
+
+
+def load_cached_only_embedder(model_id: str, revision: str, cache_root: Path) -> CachedOnlyEmbedder:
+    """Load the committed store for one (model, revision) as a cache-only embedder.
+
+    The one line every evaluation path needs -- the gate test, `gt run`, and
+    any future caller that must never touch the network -- so it is written
+    once here rather than reassembled at each call site.
+    """
+    return CachedOnlyEmbedder(read_store(store_dir(cache_root, model_id, revision)))
 
 
 class CachedEmbedder:
