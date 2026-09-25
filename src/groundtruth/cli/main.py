@@ -11,6 +11,7 @@ import typer
 from groundtruth.cli import cache as cache_commands
 from groundtruth.cli import corpus as corpus_commands
 from groundtruth.cli import golden as golden_commands
+from groundtruth.cli import run as run_commands
 from groundtruth.cli import search as search_commands
 
 app = typer.Typer(
@@ -25,9 +26,13 @@ app.add_typer(cache_commands.app, name="cache", help="Build and verify the embed
 app.add_typer(
     golden_commands.app, name="golden", help="Propose, review and validate the golden set."
 )
-# A single command, not a group -- registered directly rather than wrapped in
-# a sub-Typer, which would demand a subcommand after `gt search`.
+# Single commands, not groups -- registered directly rather than wrapped in a
+# sub-Typer, which would demand a subcommand after `gt search` / `gt run`.
 app.command("search")(search_commands.search)
+app.command("run")(run_commands.run)
+app.add_typer(
+    run_commands.baseline_app, name="baseline", help="Bless the current runs as the baseline."
+)
 
 
 @app.command()

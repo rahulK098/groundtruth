@@ -10,7 +10,7 @@ from __future__ import annotations
 import json
 from pathlib import Path
 
-from groundtruth.scoring.models import LatencySummary, MetricSummary, QueryScore, ScoringReport
+from groundtruth.scoring.models import LatencySummary, MetricSummary, ScoringReport
 from groundtruth.scoring.report_io import (
     RUNS_DIRNAME,
     read_baseline,
