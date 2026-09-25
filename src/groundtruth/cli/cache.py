@@ -9,7 +9,8 @@ import typer
 from groundtruth.config.registry import load_all_configs
 from groundtruth.corpus.snapshot import verify_snapshot
 from groundtruth.embedding.store import EmbeddingStoreError, store_dir, verify_store
-from groundtruth.paths import cache_dir, configs_dir, corpus_dir
+from groundtruth.golden.store import read_golden_set
+from groundtruth.paths import cache_dir, configs_dir, corpus_dir, golden_dir
 
 app = typer.Typer(no_args_is_help=True, add_completion=False)
 
@@ -53,10 +54,20 @@ def build(
         raise typer.Exit(code=1)
     embedding = next(iter(embeddings))
 
+    # Golden-set queries join the same store as the chunks, with their prefix
+    # already applied -- the cache key hashes the exact string sent to the
+    # model (ADR-0003), so this is what lets the gate answer every golden
+    # query through CachedOnlyEmbedder without ever touching the network.
+    # Missing or empty is fine: an early Phase 5 checkout has no golden set
+    # yet, and this command still has chunks to embed.
+    golden = read_golden_set(golden_dir())
+    extra_texts = {embedding.query_prefix + pair.query for pair in golden.pairs}
+
     typer.echo(
         f"corpus     : {len(documents)} documents\n"
         f"chunkings  : {', '.join(str(c.chunk_size) for c in chunkings)}\n"
-        f"model      : {embedding.model_id}@{embedding.revision[:12]}"
+        f"model      : {embedding.model_id}@{embedding.revision[:12]}\n"
+        f"golden set : {len(golden.pairs)} queries"
     )
 
     try:
@@ -85,6 +96,7 @@ def build(
         delegate,
         cache_dir() / "embeddings",
         batch=batch,
+        extra_texts=extra_texts,
         on_progress=_progress,
     )
 

@@ -38,16 +38,28 @@ class BuildReport:
     directory: Path
 
 
-def collect_texts(documents: Sequence[Document], chunkings: Iterable[ChunkingConfig]) -> list[str]:
+def collect_texts(
+    documents: Sequence[Document],
+    chunkings: Iterable[ChunkingConfig],
+    *,
+    extra_texts: Iterable[str] = (),
+) -> list[str]:
     """Every distinct string that must be embeddable, in deterministic order.
 
     Sorted, not insertion-ordered: the cache is committed, so a stable order
     keeps its diff meaningful across rebuilds.
+
+    ``extra_texts`` is how golden-set queries join the same store: the cache
+    key hashes the exact string sent to the model, including the bge query
+    prefix (ADR-0003), so a query string with its prefix already applied is
+    just one more string to embed -- committed once here, never computed at
+    gate time by ``CachedOnlyEmbedder``.
     """
     texts: set[str] = set()
     for chunking in chunkings:
         for chunk in chunk_corpus(documents, chunking):
             texts.add(chunk.text)
+    texts.update(extra_texts)
     return sorted(texts)
 
 
@@ -59,9 +71,10 @@ def build_cache(
     cache_root: Path,
     *,
     batch: int = 256,
+    extra_texts: Iterable[str] = (),
     on_progress: ProgressCallback | None = None,
 ) -> BuildReport:
-    """Embed every chunk string and write the committed cache."""
+    """Embed every chunk string (plus any ``extra_texts``) and write the cache."""
     directory = store_dir(cache_root, embedding.model_id, embedding.revision)
 
     try:
@@ -69,7 +82,7 @@ def build_cache(
     except EmbeddingStoreError:
         existing = None
 
-    texts = collect_texts(documents, chunkings)
+    texts = collect_texts(documents, chunkings, extra_texts=extra_texts)
     cached = CachedEmbedder(existing, delegate)
 
     vectors: list[np.ndarray] = []

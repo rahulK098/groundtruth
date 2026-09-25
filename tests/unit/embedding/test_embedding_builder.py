@@ -88,6 +88,19 @@ class TestCollectTexts:
     def test_empty_corpus_yields_nothing(self):
         assert collect_texts((), [chunking(64, 16)]) == []
 
+    def test_includes_extra_texts_alongside_chunks(self):
+        # extra_texts is how golden-set queries (with their prefix) join the
+        # same committed cache the gate reads chunks from -- the cache key
+        # already includes the prefix for exactly this reason (ADR-0003).
+        prefixed_query = "Represent this sentence for searching relevant passages: what is X"
+        texts = collect_texts(docs(1), [chunking(64, 16)], extra_texts=[prefixed_query])
+        assert prefixed_query in texts
+
+    def test_deduplicates_extra_texts_against_chunk_text(self):
+        chunk_texts = collect_texts(docs(1), [chunking(64, 16)])
+        with_dupe = collect_texts(docs(1), [chunking(64, 16)], extra_texts=chunk_texts[:1])
+        assert with_dupe == chunk_texts
+
 
 class TestBuildCache:
     def test_writes_a_verifiable_store(self, tmp_path: Path):
@@ -177,6 +190,37 @@ class TestBuildCache:
         np.testing.assert_array_equal(
             read_store(a.directory).vectors, read_store(b.directory).vectors
         )
+
+    def test_extra_texts_are_embedded_and_served_without_a_miss(self, tmp_path: Path):
+        query = "Represent this sentence for searching relevant passages: what is X"
+        report = build_cache(
+            docs(1),
+            [chunking(64, 16)],
+            embedding_config(),
+            FakeEmbedder(),
+            tmp_path,
+            extra_texts=[query],
+        )
+        embedder = CachedOnlyEmbedder(read_store(report.directory))
+        assert embedder.embed([query]).shape == (1, DIM)
+
+    def test_a_second_build_with_the_same_extra_texts_reuses_them(self, tmp_path: Path):
+        query = "Represent this sentence for searching relevant passages: what is X"
+        build_cache(
+            docs(1),
+            [chunking(64, 16)],
+            embedding_config(),
+            FakeEmbedder(),
+            tmp_path,
+            extra_texts=[query],
+        )
+
+        second = FakeEmbedder()
+        report = build_cache(
+            docs(1), [chunking(64, 16)], embedding_config(), second, tmp_path, extra_texts=[query]
+        )
+        assert second.embedded == 0
+        assert report.reused == report.total_strings
 
     def test_reports_progress(self, tmp_path: Path):
         seen: list[tuple[int, int]] = []
