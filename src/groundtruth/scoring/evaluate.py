@@ -32,7 +32,12 @@ _METRIC_FUNCTIONS: Final = {
 def _score_one_query(
     retriever: Retriever, pair: GoldenPair, k_values: Sequence[int]
 ) -> tuple[QueryScore, StageLatenciesMs]:
-    result = retriever.retrieve(pair.query, top_k=max(k_values))
+    # Deliberately NOT overridden to max(k_values): a config's own top_k is
+    # part of what is under evaluation. A config that returns fewer results
+    # than a requested k must score worse at that k -- that drop is exactly
+    # what the top_k regression demo (how-to-run.md) exists to prove the
+    # gate catches.
+    result = retriever.retrieve(pair.query)
 
     values: dict[str, dict[int, float]] = {}
     for metric_name, scorer in _METRIC_FUNCTIONS.items():
@@ -93,10 +98,12 @@ def score_config(
 ) -> ScoringReport:
     """Run every golden-set query through ``retriever`` and score it.
 
-    ``k_values`` is passed explicitly to ``retriever.retrieve`` rather than
-    relying on the config's own ``top_k`` -- the scorer's k-values are an
-    evaluation-time decision (methodology.md: reported at k in {1,3,5,10})
-    independent of what any one configuration happens to set.
+    ``retriever.retrieve`` is called with no ``top_k`` override, so a
+    configuration's own ``top_k`` bounds every metric computed here. Metrics
+    at a ``k`` beyond what the config returns degrade naturally -- there is
+    nothing to compute recall@10 over if only 2 passages came back -- which
+    is exactly the property the top_k regression demo (how-to-run.md) proves
+    the gate catches. ``k_values`` still controls which cutoffs are reported.
     """
     scores: list[QueryScore] = []
     latencies: list[StageLatenciesMs] = []

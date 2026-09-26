@@ -7,10 +7,12 @@
 > A regression-gated evaluation harness that **proves** a retrieval change was an
 > improvement — instead of asserting it.
 
-**Status: in progress (Phases 0–4 of 12 complete).** The corpus, chunking, the
-committed embedding cache and retrieval are in place; scoring and the gate are
-not yet implemented. **No results have been measured yet**, and this README will
-not carry a results table until they are. See [Build status](#build-status).
+**Status: in progress (Phases 0, 1, 2, 3, 4, 6, 7 and 8 of 12 complete; 5 in
+progress).** Scoring, first real numbers, a frozen baseline and the regression
+gate are all in place and passing. The golden set itself is at 90 of the
+target 100 pairs, with three categories still under-populated — so every
+number below is **provisional** and will be re-blessed once Phase 5 closes.
+See [Build status](#build-status).
 
 ---
 
@@ -28,23 +30,40 @@ configurations, and **fails automatically when quality regresses**.
 
 ## What it does
 
-- Scores retrieval with **Recall@k, MRR@k and nDCG@k**, hand-rolled and
-  cross-checked against an independent TREC-faithful implementation — reported
-  **per query category**, not as one blended number.
+- Scores retrieval with **Recall@k, MRR@k and nDCG@k**, hand-rolled and tested
+  against worked arithmetic (not a library) — reported **per query category**,
+  not as one blended number.
 - Scores generation (faithfulness, answer relevance) with an LLM judge, kept
   **structurally separate** from retrieval metrics and never gated.
-- Compares **four configurations** head-to-head: chunk size, dense vs hybrid,
-  reranker on/off.
+- Compares configurations head-to-head: chunk size and dense vs hybrid are
+  measured now; a reranker on/off arm is Phase 9.
 - **Fails a regression gate** when a metric drops beyond tolerance, and blocks
   the obvious cheat of deleting the queries that fail.
 
 ## Results
 
-*Not yet measured.* This section will contain the generated comparison table and
-a one-paragraph ship recommendation once Phase 7 completes.
+*(Provisional — see the status line above. Frozen in `results/baseline.json`,
+reproducible with `uv run gt run --all --out results/`.)*
 
-Publishing a table of numbers before the harness exists would be exactly the
-failure this project argues against.
+| Config | Recall@10 | MRR@10 | nDCG@10 | Latency (p50) |
+|---|---|---|---|---|
+| `dense_512` (baseline) | 0.778 | 0.503 | 0.511 | 0.72 ms |
+| `dense_256` | 0.785 | 0.505 | 0.525 | 2.16 ms |
+| `hybrid_512` | **0.861** | **0.624** | **0.607** | 8.95 ms |
+
+Hybrid beats both dense-only configurations on every metric measured, at
+roughly 12x the latency of `dense_512` — still under 9 ms, negligible next to
+the ~430 ms query-embedding cost. Provisional recommendation: **ship
+`hybrid_512`**. Not yet stated as final: the golden set this was measured
+against is 90 of the target 100 pairs, and three query categories are still
+under-populated (see Build status) — the numbers above will be re-measured
+and re-blessed once that closes, per [ADR-0010](docs/adr/0010-config-hash-and-run-fingerprint.md)'s
+own anti-cheat rule (a golden-set change is a hard gate failure, precisely so
+this kind of update can't happen silently).
+
+The reranker arm (`hybrid_512_rerank`) is configured but not yet
+implemented — `Retriever` refuses it explicitly — so it is absent from this
+table rather than guessed at.
 
 ## Build status
 
@@ -55,10 +74,10 @@ failure this project argues against.
 | 2 — Corpus ingest + chunking | **done** — 150 opinions, 7.4M chars |
 | 3 — Embedding cache + guards | **done** — 11,028 vectors, 8.5 MB |
 | 4 — Retrieval (NumPy + BM25 + RRF) | **done** — 0.6 ms dense, 0.7 ms lexical |
-| 5 — Golden set review (100 pairs) | **in progress** — `gt golden` tooling done; generation and human review pending |
-| 6 — Scorers | not started |
-| 7 — First numbers, freeze baseline | not started |
-| 8 — Regression gate + demos | not started |
+| 5 — Golden set review (100 pairs) | **in progress** — 90/100 pairs; `multi-hop`, `procedural`, `ambiguous-terminology` under the 12-minimum; 22 pairs need relabeling (see [ADR-0009](docs/adr/0009-golden-set-is-human-reviewed.md)) |
+| 6 — Scorers | **done** — span-level Recall@k/MRR@k/nDCG@k, tested against worked arithmetic |
+| 7 — First numbers, freeze baseline | **done** — hybrid_512 leads on every metric; see [Results](#results) |
+| 8 — Regression gate + demos | **done** — `pytest -m gate`, three self-reverting demos in `scripts/demo/` |
 | 9–12 — Reranker, service, generation eval, report | not started |
 
 ## Running it
@@ -68,7 +87,7 @@ API key, no model download, no GPU, no network.
 
 ```bash
 uv sync --frozen --extra dev     # ~50 packages, no torch
-uv run pytest                    # 405 tests
+uv run pytest                    # 775 tests, gate included by default
 uv run gt --help
 ```
 
