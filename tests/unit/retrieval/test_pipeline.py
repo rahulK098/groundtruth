@@ -13,8 +13,10 @@ import numpy as np
 import pytest
 
 from groundtruth.chunking.models import Chunk
+from groundtruth.config.models import RerankerConfig
 from groundtruth.index.bm25 import Bm25Index
 from groundtruth.index.numpy_vector import NumpyVectorIndex
+from groundtruth.rerank.protocol import RerankScores
 from groundtruth.retrieval.pipeline import Retriever, RetrieverError
 from tests.fixtures.mini_corpus import mini_config
 
@@ -249,33 +251,132 @@ class TestValidation:
             make_retriever().retrieve("   ")
 
 
-class TestUnimplementedStages:
-    def test_a_config_enabling_the_reranker_is_refused(self):
-        # Phase 9 work. Until then a refusal is the only honest answer:
-        # running the config anyway would write a result file labelled
-        # "hybrid_512_rerank" produced without a reranker.
-        config = mini_config(retrieval_mode="dense", top_k=3, dense_top_n=3, dimension=3)
-        with_rerank = config.model_copy(
-            update={
-                "reranker": config.reranker.model_copy(
-                    update={
-                        "enabled": True,
-                        "model_id": "BAAI/bge-reranker-base",
-                        "revision": "2cfc18c9415c",
-                    }
-                )
-            }
-        )
-        with pytest.raises(RetrieverError, match="reranker"):
-            Retriever(
-                with_rerank,
-                embedder=StubEmbedder(),
-                vector_index=NumpyVectorIndex(
-                    tuple(VECTORS), np.array(list(VECTORS.values()), dtype=np.float32)
-                ),
-                chunks=make_chunks(),
-            )
+RERANK_MODEL = "BAAI/bge-reranker-base"
+RERANK_REVISION = "2cfc18c9415c912f9d8155881c133215df768a70"
 
+#: Deliberately the REVERSE of the dense ranking for "summary judgment"
+#: (c1, c3, c2), so a reranked result is unmistakable.
+RERANK_SCORES = {TEXTS["c1"]: 1.0, TEXTS["c3"]: 2.0, TEXTS["c2"]: 3.0}
+
+
+class StubReranker:
+    """Scores from a fixed table; records what it was asked to score."""
+
+    model_id = RERANK_MODEL
+    revision = RERANK_REVISION
+
+    def __init__(self, compute_ms: float = 240.0, drop_one: bool = False) -> None:
+        self.compute_ms = compute_ms
+        self.drop_one = drop_one
+        self.seen: list[tuple[str, ...]] = []
+
+    def score(self, query: str, passages: Sequence[str]) -> RerankScores:
+        self.seen.append(tuple(passages))
+        scores = tuple(RERANK_SCORES[p] for p in passages)
+        return RerankScores(
+            scores=scores[:-1] if self.drop_one else scores, compute_ms=self.compute_ms
+        )
+
+
+def rerank_config(
+    *, mode: str = "dense", top_k: int = 3, top_n_in: int = 3, model_id: str = RERANK_MODEL
+):
+    config = mini_config(retrieval_mode=mode, top_k=top_k, dense_top_n=3, dimension=3)
+    return config.model_copy(
+        update={
+            "reranker": RerankerConfig(
+                enabled=True, model_id=model_id, revision=RERANK_REVISION, top_n_in=top_n_in
+            )
+        }
+    )
+
+
+def reranking_retriever(config, reranker) -> Retriever:
+    return Retriever(
+        config,
+        embedder=StubEmbedder(),
+        vector_index=NumpyVectorIndex(
+            tuple(VECTORS), np.array(list(VECTORS.values()), dtype=np.float32)
+        ),
+        lexical_index=Bm25Index(tuple(TEXTS), tuple(TEXTS.values()))
+        if config.retrieval_mode == "hybrid"
+        else None,
+        chunks=make_chunks(),
+        reranker=reranker,
+    )
+
+
+class TestReranking:
+    def test_reorders_candidates_by_rerank_score(self):
+        result = reranking_retriever(rerank_config(), StubReranker()).retrieve("summary judgment")
+        assert [p.chunk_id for p in result.passages] == ["c2", "c3", "c1"]
+
+    def test_reports_the_rerank_score_and_keeps_the_dense_score(self):
+        # Per-stage scores are kept, not blended: "the reranker demoted it" is
+        # only diagnosable if the dense score survives beside the rerank one.
+        passage = (
+            reranking_retriever(rerank_config(), StubReranker())
+            .retrieve("summary judgment")
+            .passages[0]
+        )
+        assert passage.scores.rerank == 3.0
+        assert passage.scores.dense is not None
+
+    def test_hybrid_keeps_the_fused_score_rather_than_overwriting_it(self):
+        result = reranking_retriever(rerank_config(mode="hybrid"), StubReranker()).retrieve(
+            "summary judgment"
+        )
+        for passage in result.passages:
+            assert passage.scores.fused is not None
+            assert passage.scores.rerank is not None
+            assert passage.scores.fused != passage.scores.rerank
+
+    def test_only_the_top_n_in_candidates_reach_the_reranker(self):
+        reranker = StubReranker()
+        reranking_retriever(rerank_config(top_k=1, top_n_in=2), reranker).retrieve(
+            "summary judgment"
+        )
+        # Dense order is c1, c3, c2: only the first two are sent.
+        assert reranker.seen == [(TEXTS["c1"], TEXTS["c3"])]
+
+    def test_truncates_to_top_k_after_reranking_not_before(self):
+        # Truncating first would throw away the candidate the reranker would
+        # have promoted -- the entire point of the stage.
+        result = reranking_retriever(rerank_config(top_k=1, top_n_in=3), StubReranker()).retrieve(
+            "summary judgment"
+        )
+        assert [p.chunk_id for p in result.passages] == ["c2"]
+
+    def test_the_rerank_latency_is_the_reported_compute_cost(self):
+        # ADR-0012: a cached reranker reports the cost the model actually had.
+        result = reranking_retriever(rerank_config(), StubReranker(compute_ms=240.0)).retrieve(
+            "summary judgment"
+        )
+        assert result.latency_ms.rerank == 240.0
+        assert result.latency_ms.total >= result.latency_ms.rerank
+
+    def test_an_enabled_reranker_with_none_supplied_is_refused(self):
+        with pytest.raises(RetrieverError, match="no reranker was supplied"):
+            reranking_retriever(rerank_config(), None)
+
+    def test_a_reranker_supplied_to_a_config_that_disables_it_is_dead_wiring(self):
+        config = mini_config(retrieval_mode="dense", top_k=3, dense_top_n=3, dimension=3)
+        with pytest.raises(RetrieverError, match="dead wiring"):
+            reranking_retriever(config, StubReranker())
+
+    def test_a_reranker_of_the_wrong_model_is_refused(self):
+        # A result file labelled with one model's name but produced by
+        # another's scores is worse than no result at all.
+        with pytest.raises(RetrieverError, match="does not match"):
+            reranking_retriever(rerank_config(model_id="other/model"), StubReranker())
+
+    def test_a_reranker_returning_the_wrong_number_of_scores_is_refused(self):
+        retriever = reranking_retriever(rerank_config(), StubReranker(drop_one=True))
+        with pytest.raises(RetrieverError, match="scores"):
+            retriever.retrieve("summary judgment")
+
+
+class TestConstruction:
     def test_an_index_of_the_wrong_dimension_is_rejected(self):
         config = mini_config(retrieval_mode="dense", top_k=3, dense_top_n=3, dimension=3)
         with pytest.raises(RetrieverError, match="index dimension"):

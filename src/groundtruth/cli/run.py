@@ -1,10 +1,11 @@
 """``gt run`` and ``gt baseline bless`` -- the evaluation path's CLI surface.
 
-Both commands use ``CachedOnlyEmbedder`` exclusively. Unlike ``gt search``,
-neither ever needs the ``models`` extra: every string an evaluation run could
-possibly need -- every chunk, every golden query -- is already in the
-committed cache (ADR-0003), and a miss here is a bug to fix by regenerating
-the cache, never a reason to fall back to a live model.
+Both commands serve everything from committed caches -- ``CachedOnlyEmbedder``
+for vectors, ``CachedOnlyReranker`` for cross-encoder scores. Unlike
+``gt search``, neither ever needs the ``models`` extra: every string and
+every (query, passage) pair an evaluation run could need is already committed
+(ADR-0003, ADR-0012), and a miss here is a bug to fix by regenerating a
+cache, never a reason to fall back to a live model.
 """
 
 from __future__ import annotations
@@ -22,11 +23,12 @@ from groundtruth.config.registry import (
 )
 from groundtruth.corpus.models import Document
 from groundtruth.corpus.snapshot import SnapshotError, verify_snapshot
-from groundtruth.embedding.cache import EmbeddingCacheMissError, load_cached_only_embedder
+from groundtruth.embedding.cache import EmbeddingCacheMissError
 from groundtruth.golden.models import GoldenSet
 from groundtruth.golden.store import GoldenStoreError, read_golden_set
 from groundtruth.paths import cache_dir, corpus_dir, golden_dir
-from groundtruth.retrieval.build import UnsupportedBackendError, build_retriever
+from groundtruth.rerank.cache import RerankCacheMissError
+from groundtruth.retrieval.build import UnsupportedBackendError, build_cached_retriever
 from groundtruth.retrieval.pipeline import RetrieverError
 from groundtruth.scoring.evaluate import score_config
 from groundtruth.scoring.models import ScoringReport
@@ -53,29 +55,26 @@ def _run_one(
     documents: tuple[Document, ...],
     cache_root: Path,
     code_version: str,
-) -> ScoringReport | None:
-    """Score one config, or return ``None`` for a stage that is not built yet.
+) -> ScoringReport:
+    """Score one config from the committed caches, or fail loudly naming why.
 
-    Currently the only such stage is the reranker (Retriever itself refuses
-    it). Reported as a clean skip rather than a crash, so `gt run --all`
-    covers everything that exists without failing on what does not yet.
+    A cache miss -- embedding or rerank -- can surface while building the
+    retriever or only once a particular query asks for it, so both are
+    inside the guard.
     """
-    if config.reranker.enabled:
-        typer.echo(f"{config.name}: skipped -- reranker not implemented yet (Phase 9)")
-        return None
-
-    embedder = load_cached_only_embedder(
-        config.embedding.model_id, config.embedding.revision, cache_root
-    )
     try:
-        retriever = build_retriever(config, documents, embedder)
-    except (RetrieverError, UnsupportedBackendError, EmbeddingCacheMissError) as exc:
+        retriever = build_cached_retriever(config, documents, cache_root)
+        return score_config(
+            retriever, golden, corpus_manifest_hash=corpus_manifest_hash, code_version=code_version
+        )
+    except (
+        RetrieverError,
+        UnsupportedBackendError,
+        EmbeddingCacheMissError,
+        RerankCacheMissError,
+    ) as exc:
         typer.echo(f"{config.name}: FAIL -- {exc}", err=True)
         raise typer.Exit(code=1) from exc
-
-    return score_config(
-        retriever, golden, corpus_manifest_hash=corpus_manifest_hash, code_version=code_version
-    )
 
 
 def _summary_line(report: ScoringReport) -> str:
@@ -97,7 +96,7 @@ def _summary_line(report: ScoringReport) -> str:
 
 def run(
     config_name: str = typer.Option("", "--config", help="Run one config by name."),
-    all_configs: bool = typer.Option(False, "--all", help="Run every non-reranker config."),
+    all_configs: bool = typer.Option(False, "--all", help="Run every config."),
     configs: Path | None = typer.Option(None, help="Config directory. Defaults to configs/."),
     corpus: Path | None = typer.Option(
         None, help="Corpus snapshot directory. Defaults to data/corpus."
@@ -138,7 +137,7 @@ def run(
     from groundtruth.corpus.snapshot import read_manifest
 
     manifest_hash = read_manifest(corpus or corpus_dir()).manifest_hash
-    cache_root = (cache or cache_dir()) / "embeddings"
+    cache_root = cache or cache_dir()
 
     typer.echo(f"golden set : {len(golden_set.pairs)} pairs  {golden_set.golden_set_hash}")
     typer.echo(f"corpus     : {len(documents)} documents  {manifest_hash}\n")
@@ -152,8 +151,6 @@ def run(
             cache_root=cache_root,
             code_version=__version__,
         )
-        if report is None:
-            continue
         path = write_run(report, out)
         typer.echo(_summary_line(report))
         typer.echo(f"  -> {path}")

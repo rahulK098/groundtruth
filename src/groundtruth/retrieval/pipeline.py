@@ -18,6 +18,7 @@ from groundtruth.config.models import RetrievalConfig
 from groundtruth.embedding.protocol import Embedder
 from groundtruth.index.models import ScoredChunk
 from groundtruth.index.protocol import LexicalIndex, VectorIndex
+from groundtruth.rerank.protocol import Reranker
 from groundtruth.retrieval.fusion import reciprocal_rank_fusion
 from groundtruth.retrieval.models import (
     PassageScores,
@@ -25,6 +26,7 @@ from groundtruth.retrieval.models import (
     RetrievedPassage,
     StageLatenciesMs,
 )
+from groundtruth.retrieval.ordering import order_candidates
 
 
 class RetrieverError(Exception):
@@ -51,23 +53,41 @@ class Retriever:
         vector_index: VectorIndex,
         chunks: Mapping[str, Chunk],
         lexical_index: LexicalIndex | None = None,
+        reranker: Reranker | None = None,
     ) -> None:
         self._config = config
         self.embedder = embedder
         self.vector_index = vector_index
         self.lexical_index = lexical_index
+        self.reranker = reranker
         self._chunks = chunks
 
         self._check_mode(config, lexical_index)
         self._check_dimensions(config, embedder, vector_index)
         self._check_chunk_lookup(vector_index, chunks)
+        self._check_reranker(config, reranker)
 
-        if config.reranker.enabled:
-            # Better a refusal than a result silently produced without the
-            # stage the config says ran.
+    @staticmethod
+    def _check_reranker(config: RetrievalConfig, reranker: Reranker | None) -> None:
+        settings = config.reranker
+        if not settings.enabled:
+            if reranker is not None:
+                raise RetrieverError(
+                    f"config {config.name!r} disables the reranker, so one supplied "
+                    f"here is never called; that is dead wiring"
+                )
+            return
+
+        if reranker is None:
+            # Better a refusal than a result file labelled "..._rerank" that
+            # was produced without the stage its name promises.
             raise RetrieverError(
-                f"config {config.name!r} enables the reranker, which is not "
-                f"implemented yet; run a config with reranker.enabled = false"
+                f"config {config.name!r} enables the reranker but no reranker was supplied"
+            )
+        if (reranker.model_id, reranker.revision) != (settings.model_id, settings.revision):
+            raise RetrieverError(
+                f"reranker {reranker.model_id}@{reranker.revision} does not match the "
+                f"{settings.model_id}@{settings.revision} declared by config {config.name!r}"
             )
 
     @staticmethod
@@ -134,15 +154,62 @@ class Retriever:
             dense = self.vector_index.search(query_vector, self._config.dense_top_n)
 
         lexical, ordered = self._lexical_and_fused(query, dense, timings)
-        total_ms = (perf_counter() - started) * 1000.0
+        fused_scores = {candidate.chunk_id: candidate.score for candidate in ordered}
+
+        rerank_scores: dict[str, float] = {}
+        # What the reranker says the stage cost, minus what calling it
+        # actually took. Zero for a live model; for a cached one it adds back
+        # the recorded compute time the lookup stood in for (ADR-0012), so
+        # `total` still includes every stage's cost.
+        recorded_extra_ms = 0.0
+        if self.reranker is not None:
+            ordered, rerank_scores, recorded_extra_ms = self._rerank(query, ordered, timings)
+
+        total_ms = (perf_counter() - started) * 1000.0 + recorded_extra_ms
 
         return RetrievalResult(
             query=query,
             config_name=self._config.name,
             config_hash=self._config.config_hash,
-            passages=self._assemble(ordered[:limit], dense, lexical),
+            passages=self._assemble(ordered[:limit], dense, lexical, fused_scores, rerank_scores),
             latency_ms=StageLatenciesMs(total=total_ms, **timings),
         )
+
+    def _rerank(
+        self, query: str, ordered: tuple[ScoredChunk, ...], timings: dict[str, float]
+    ) -> tuple[tuple[ScoredChunk, ...], dict[str, float], float]:
+        """Rescore the top ``top_n_in`` candidates and re-order them.
+
+        Truncation to ``top_k`` happens after this, never before -- truncating
+        first would discard exactly the candidate the reranker exists to
+        promote. Candidates beyond ``top_n_in`` are dropped: a cross-encoder
+        costs one forward pass per candidate, and ``top_n_in`` is that budget.
+        """
+        if self.reranker is None:  # pragma: no cover - guarded by the caller
+            return ordered, {}, 0.0
+
+        candidates = ordered[: self._config.reranker.top_n_in]
+        passages = [self._chunks[candidate.chunk_id].text for candidate in candidates]
+
+        started = perf_counter()
+        result = self.reranker.score(query, passages)
+        wall_ms = (perf_counter() - started) * 1000.0
+
+        if len(result.scores) != len(candidates):
+            raise RetrieverError(
+                f"reranker returned {len(result.scores)} scores for "
+                f"{len(candidates)} candidates; every candidate needs exactly one"
+            )
+
+        scores = {
+            candidate.chunk_id: score
+            for candidate, score in zip(candidates, result.scores, strict=True)
+        }
+        reranked = order_candidates(
+            ScoredChunk(chunk_id=chunk_id, score=score) for chunk_id, score in scores.items()
+        )
+        timings["rerank"] = result.compute_ms
+        return reranked, scores, max(0.0, result.compute_ms - wall_ms)
 
     def _lexical_and_fused(
         self, query: str, dense: tuple[ScoredChunk, ...], timings: dict[str, float]
@@ -167,6 +234,8 @@ class Retriever:
         selected: tuple[ScoredChunk, ...],
         dense: tuple[ScoredChunk, ...],
         lexical: tuple[ScoredChunk, ...],
+        fused_scores: Mapping[str, float],
+        rerank_scores: Mapping[str, float],
     ) -> tuple[RetrievedPassage, ...]:
         """Turn ranked candidates into passages carrying every arm's score."""
         hybrid = self._config.retrieval_mode == "hybrid"
@@ -189,8 +258,11 @@ class Retriever:
                         lexical=lexical_scores.get(candidate.chunk_id) if hybrid else None,
                         # In dense mode the ordering *is* the dense score, so
                         # a separate `fused` number would be the same value
-                        # wearing a different name.
-                        fused=candidate.score if hybrid else None,
+                        # wearing a different name. Read from the map rather
+                        # than `candidate.score`, which after reranking is
+                        # the rerank score.
+                        fused=fused_scores.get(candidate.chunk_id) if hybrid else None,
+                        rerank=rerank_scores.get(candidate.chunk_id),
                     ),
                 )
             )

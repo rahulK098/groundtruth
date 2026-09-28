@@ -3,7 +3,7 @@
 # so it never drifts from what that document promises.
 
 .PHONY: reproduce verify gate demo-top-k demo-chunk-size demo-improvement \
-        demo-regression demos
+        demo-rerank demo-regression demos
 
 # "The one command" (docs/how-to-run.md). gt report (the markdown
 # comparison table) is Phase 12 work and not implemented yet -- everything
@@ -34,9 +34,15 @@ demo-chunk-size:
 demo-improvement:
 	uv run python scripts/demo/chunk_overlap_improvement.py
 
+# The brief's original third scenario, runnable since Phase 9: hybrid_512 ->
+# hybrid_512_rerank, full corpus, served from the committed rerank cache.
+# The brief expected an improvement; measured, it regresses mrr and ndcg.
+demo-rerank:
+	uv run python scripts/demo/rerank_on.py
+
 # The two regressions together -- what "make demo-regression" in
 # how-to-run.md refers to.
 demo-regression: demo-top-k demo-chunk-size
 
-# All three, for a single "prove every claim" pass.
-demos: demo-regression demo-improvement
+# All of them, for a single "prove every claim" pass.
+demos: demo-regression demo-improvement demo-rerank

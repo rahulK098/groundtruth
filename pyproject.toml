@@ -191,6 +191,9 @@ omit = [
     # imported there at all, let alone executed. Its caller, builder.py, IS
     # covered via a fake embedder.
     "src/groundtruth/embedding/sentence_transformer.py",
+    # Same reason: the cross-encoder needs the `models` extra. Its caller,
+    # rerank/builder.py, IS covered via a stub reranker.
+    "src/groundtruth/rerank/cross_encoder.py",
 ]
 
 [tool.coverage.report]

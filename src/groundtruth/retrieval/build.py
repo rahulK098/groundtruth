@@ -13,6 +13,7 @@ the same :class:`~groundtruth.retrieval.pipeline.Retriever`.
 from __future__ import annotations
 
 from collections.abc import Iterable
+from pathlib import Path
 
 import numpy as np
 
@@ -20,10 +21,13 @@ from groundtruth.chunking.models import Chunk
 from groundtruth.chunking.pipeline import chunk_corpus
 from groundtruth.config.models import RetrievalConfig
 from groundtruth.corpus.models import Document
+from groundtruth.embedding.cache import load_cached_only_embedder
 from groundtruth.embedding.protocol import Embedder
 from groundtruth.index.bm25 import Bm25Index
 from groundtruth.index.numpy_vector import NumpyVectorIndex
 from groundtruth.index.protocol import LexicalIndex
+from groundtruth.rerank.cache import load_cached_only_reranker
+from groundtruth.rerank.protocol import Reranker
 from groundtruth.retrieval.pipeline import Retriever
 
 
@@ -56,7 +60,11 @@ def build_lexical_index(config: RetrievalConfig, chunks: tuple[Chunk, ...]) -> L
 
 
 def build_retriever(
-    config: RetrievalConfig, documents: Iterable[Document], embedder: Embedder
+    config: RetrievalConfig,
+    documents: Iterable[Document],
+    embedder: Embedder,
+    *,
+    reranker: Reranker | None = None,
 ) -> Retriever:
     """Chunk, embed and index a corpus, and return a retriever over it.
 
@@ -82,4 +90,27 @@ def build_retriever(
         vector_index=NumpyVectorIndex(tuple(chunk.chunk_id for chunk in chunks), vectors),
         lexical_index=build_lexical_index(config, chunks),
         chunks={chunk.chunk_id: chunk for chunk in chunks},
+        reranker=reranker,
     )
+
+
+def build_cached_retriever(
+    config: RetrievalConfig, documents: Iterable[Document], cache_root: Path
+) -> Retriever:
+    """The evaluation-path retriever, served entirely from committed caches.
+
+    Cache-only embedder and, if the config enables it, cache-only reranker:
+    neither can compute anything, so this cannot download a model or reach
+    the network (ADR-0003, ADR-0012). The one assembly `gt run` and the gate
+    share, so the two can never disagree about what "the evaluated system" is.
+    """
+    embedder = load_cached_only_embedder(
+        config.embedding.model_id, config.embedding.revision, cache_root / "embeddings"
+    )
+    reranker = None
+    settings = config.reranker
+    if settings.enabled and settings.model_id and settings.revision:
+        reranker = load_cached_only_reranker(
+            settings.model_id, settings.revision, cache_root / "rerank"
+        )
+    return build_retriever(config, documents, embedder, reranker=reranker)

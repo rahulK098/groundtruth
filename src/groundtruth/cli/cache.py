@@ -8,6 +8,7 @@ import typer
 
 from groundtruth.config.registry import load_all_configs
 from groundtruth.corpus.snapshot import verify_snapshot
+from groundtruth.embedding.cache import load_cached_only_embedder
 from groundtruth.embedding.store import EmbeddingStoreError, store_dir, verify_store
 from groundtruth.golden.store import read_golden_set
 from groundtruth.paths import cache_dir, configs_dir, corpus_dir, golden_dir
@@ -104,6 +105,80 @@ def build(
         f"\nwrote {report.total_strings:,} vectors to {report.directory}\n"
         f"  computed : {report.computed:,}\n"
         f"  reused   : {report.reused:,}"
+    )
+
+
+@app.command("rerank")
+def rerank(
+    encode_batch: int = typer.Option(16, help="Pairs per cross-encoder forward pass."),
+) -> None:
+    """Score every golden query's candidates with the cross-encoder and commit them.
+
+    Requires the `models` extra and downloads ~1.1 GB of reranker weights on
+    first run. Like `gt cache build`, this is the only place the model runs:
+    the gate serves the committed scores and cannot compute (ADR-0012).
+
+    Run after `gt cache build` -- the rerank candidates come from the real
+    pipeline, which needs every golden query's embedding already committed.
+    """
+    from groundtruth.embedding.sentence_transformer import ModelExtraNotInstalledError
+    from groundtruth.rerank.builder import build_rerank_cache
+    from groundtruth.rerank.cross_encoder import CrossEncoderReranker
+
+    documents = verify_snapshot(corpus_dir())
+    configs = [cfg for cfg in load_all_configs(configs_dir()).values() if cfg.reranker.enabled]
+    if not configs:
+        typer.echo("no configuration enables the reranker; nothing to build")
+        return
+
+    models = {(cfg.reranker.model_id, cfg.reranker.revision) for cfg in configs}
+    embeddings = {cfg.embedding for cfg in configs}
+    if len(models) != 1 or len(embeddings) != 1:
+        typer.echo(
+            "Expected one reranker model and one embedding model across reranker "
+            "configs; building multiple stores is not supported yet.",
+            err=True,
+        )
+        raise typer.Exit(code=1)
+    model_id, revision = next(iter(models))
+    embedding = next(iter(embeddings))
+    if model_id is None or revision is None:  # pragma: no cover - RerankerConfig forbids this
+        raise typer.Exit(code=1)
+
+    golden = read_golden_set(golden_dir())
+    if not golden.pairs:
+        typer.echo("the golden set is empty; there are no queries to rerank", err=True)
+        raise typer.Exit(code=1)
+
+    typer.echo(
+        f"configs    : {', '.join(cfg.name for cfg in configs)}\n"
+        f"model      : {model_id}@{revision[:12]}\n"
+        f"golden set : {len(golden.pairs)} queries"
+    )
+
+    try:
+        delegate = CrossEncoderReranker(model_id, revision, batch_size=encode_batch)
+    except ModelExtraNotInstalledError as exc:
+        typer.echo(str(exc), err=True)
+        raise typer.Exit(code=1) from exc
+
+    embedder = load_cached_only_embedder(
+        embedding.model_id, embedding.revision, cache_dir() / "embeddings"
+    )
+    report = build_rerank_cache(
+        configs,
+        documents,
+        embedder,
+        golden,
+        delegate,
+        cache_dir() / "rerank",
+        on_progress=_progress,
+    )
+
+    typer.echo(
+        f"\nwrote {report.pairs:,} scores for {report.queries} queries to {report.directory}\n"
+        f"  computed : {report.computed}\n"
+        f"  reused   : {report.reused}"
     )
 
 

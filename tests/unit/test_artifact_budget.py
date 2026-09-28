@@ -61,3 +61,5 @@ class TestBudget:
         assert (root / "corpus" / "manifest.json").is_file()
         assert (root / "tokenizers" / "bge-small-en-v1.5" / "tokenizer.json").is_file()
         assert list((root / "cache" / "embeddings").glob("*/vectors.f16.npy"))
+        # ADR-0012: the reranker arm is gated, so its scores must be committed.
+        assert list((root / "cache" / "rerank").glob("*/pairs.jsonl"))

@@ -25,12 +25,11 @@ import pytest
 from groundtruth import __version__
 from groundtruth.config.registry import load_all_configs, shipped_configs_dir
 from groundtruth.corpus.snapshot import read_manifest, verify_snapshot
-from groundtruth.embedding.cache import load_cached_only_embedder
 from groundtruth.gate.compare import ConfigGateResult, evaluate_gate
 from groundtruth.gate.policy import load_gate_policy
 from groundtruth.golden.store import read_golden_set
 from groundtruth.paths import cache_dir, configs_dir, corpus_dir, golden_dir
-from groundtruth.retrieval.build import build_retriever
+from groundtruth.retrieval.build import build_cached_retriever
 from groundtruth.scoring.evaluate import score_config
 from groundtruth.scoring.models import ScoringReport
 from groundtruth.scoring.report_io import ReportIOError, read_baseline
@@ -44,25 +43,25 @@ _POLICY = load_gate_policy(configs_dir() / "gate_policy.yaml")
 
 
 def _current_reports() -> dict[str, ScoringReport]:
-    """Score every implemented, non-reranker config against the golden set."""
+    """Score every config against the golden set, entirely from committed caches.
+
+    The same assembly `gt run` uses (`build_cached_retriever`), so the gate
+    and the numbers in results/ can never disagree about what was evaluated.
+    """
     documents = verify_snapshot(corpus_dir())
     manifest_hash = read_manifest(corpus_dir()).manifest_hash
     golden = read_golden_set(golden_dir())
     configs = load_all_configs(shipped_configs_dir())
 
-    reports: dict[str, ScoringReport] = {}
-    for name, config in configs.items():
-        if config.reranker.enabled:
-            # Retriever itself refuses this (Phase 9); nothing to score yet.
-            continue
-        embedder = load_cached_only_embedder(
-            config.embedding.model_id, config.embedding.revision, cache_dir() / "embeddings"
+    return {
+        name: score_config(
+            build_cached_retriever(config, documents, cache_dir()),
+            golden,
+            corpus_manifest_hash=manifest_hash,
+            code_version=__version__,
         )
-        retriever = build_retriever(config, documents, embedder)
-        reports[name] = score_config(
-            retriever, golden, corpus_manifest_hash=manifest_hash, code_version=__version__
-        )
-    return reports
+        for name, config in configs.items()
+    }
 
 
 @pytest.fixture(scope="module")
