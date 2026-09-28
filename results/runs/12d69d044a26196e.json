@@ -569,12 +569,12 @@
   "corpus_manifest_hash": "sha256:606283c740d8d7b7b3fafb81eee7cb6c40236e5b63776540855451c41db48eb1",
   "golden_set_hash": "sha256:879b242be5ce21fece48c8285cf2ecaa442aec53b181295988582f0f9b2d12b2",
   "latency": {
-    "dense_ms": 1.026900004944764,
-    "embed_ms": 0.07149999146349728,
-    "fuse_ms": 0.14925000141374767,
-    "lexical_ms": 7.632449982338585,
+    "dense_ms": 1.5371000008599367,
+    "embed_ms": 0.11905000064871274,
+    "fuse_ms": 0.23430000146618113,
+    "lexical_ms": 11.136199998873053,
     "rerank_ms": 0.0,
-    "total_ms": 8.947049995185807
+    "total_ms": 13.101550004648743
   },
   "n_queries": 90,
   "n_skipped": 0,
