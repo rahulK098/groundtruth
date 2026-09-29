@@ -1,0 +1,30 @@
+# The service path (ADR-0001, ADR-0008). NOT needed for the gate, which runs
+# in-process with no infrastructure -- see docs/how-to-run.md.
+#
+#   docker compose up --build        # db + api
+#   docker compose run --rm gate     # the gate, environment-independent
+#
+# Reset: `docker compose down -v`. The schema is created by `gt db load`
+# (idempotent), not by initdb scripts, so there is no "initdb only runs on an
+# empty volume" trap to fall into.
+
+services:
+  db:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_USER: groundtruth
+      POSTGRES_PASSWORD: groundtruth
+      POSTGRES_DB: groundtruth
+    # 127.0.0.1 only, and 5433 so a host Postgres on 5432 does not collide.
+    ports:
+      - "127.0.0.1:5433:5432"
+    volumes:
+      - pgdata:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U groundtruth -d groundtruth"]
+      interval: 2s
+      timeout: 3s
+      retries: 30
+
+volumes:
+  pgdata:

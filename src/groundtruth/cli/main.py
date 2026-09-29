@@ -10,6 +10,7 @@ import typer
 
 from groundtruth.cli import cache as cache_commands
 from groundtruth.cli import corpus as corpus_commands
+from groundtruth.cli import db as db_commands
 from groundtruth.cli import golden as golden_commands
 from groundtruth.cli import run as run_commands
 from groundtruth.cli import search as search_commands
@@ -23,6 +24,7 @@ app = typer.Typer(
 
 app.add_typer(corpus_commands.app, name="corpus", help="Fetch and verify the corpus snapshot.")
 app.add_typer(cache_commands.app, name="cache", help="Build and verify the embedding cache.")
+app.add_typer(db_commands.app, name="db", help="Load the service path's Postgres (not the gate).")
 app.add_typer(
     golden_commands.app, name="golden", help="Propose, review and validate the golden set."
 )

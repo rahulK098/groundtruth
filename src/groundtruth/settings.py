@@ -79,6 +79,10 @@ class Settings(BaseSettings):
     ollama_base_url: str = ""
     ollama_model: str = ""
 
+    #: The service path's Postgres (ADR-0001). Never read by the gate, which
+    #: needs no database. Defaults to the Compose service published on 5433.
+    gt_database_url: str = "postgresql://groundtruth:groundtruth@127.0.0.1:5433/groundtruth"
+
     def require_courtlistener_token(self) -> str:
         if self.courtlistener_api_token is None:
             raise MissingCredentialError(
