@@ -1,12 +1,16 @@
-"""Assembling a retriever for the service path (ADR-0001).
+"""Assembling a retriever for the service path (ADR-0001, ADR-0014).
 
-Same ``Retriever``, same pipeline, same chunk lookup as the evaluation path;
-only the two storage primitives are swapped for their Postgres versions. The
-chunk lookup is still built in-process from the committed corpus -- it is
-deterministic and cheap -- and ``Retriever`` itself checks at construction
-that every chunk id loaded into Postgres resolves in it. A database loaded
-under a different chunking therefore fails loudly rather than returning
-passages whose spans do not match their text.
+Same ``Retriever``, same pipeline, same chunk lookup as the evaluation path.
+Exactly one storage primitive differs: the dense arm reads pgvector instead of
+a NumPy matrix. The lexical arm is the same in-process BM25 the gate measures
+(ADR-0014) -- serving ``pg_fts`` instead made the hybrid worse than dense-only
+-- unless a config explicitly asks for ``pg_fts``, which stays available so
+the IDF gap remains measurable.
+
+The chunk lookup is still built in-process from the committed corpus, and
+``Retriever`` checks at construction that every chunk id loaded into Postgres
+resolves in it. A database loaded under a different chunking therefore fails
+loudly rather than returning passages whose spans do not match their text.
 """
 
 from __future__ import annotations
@@ -19,31 +23,13 @@ from groundtruth.config.models import RetrievalConfig
 from groundtruth.corpus.models import Document
 from groundtruth.embedding.protocol import Embedder
 from groundtruth.index.postgres import PgFtsIndex, PgVectorIndex, index_key
+from groundtruth.index.protocol import LexicalIndex
 from groundtruth.rerank.protocol import Reranker
+from groundtruth.retrieval.build import build_lexical_index
 from groundtruth.retrieval.pipeline import Retriever
 
 if TYPE_CHECKING:  # pragma: no cover
     from psycopg import Connection
-
-
-def served_config(config: RetrievalConfig) -> RetrievalConfig:
-    """The configuration the service path actually runs.
-
-    The service's lexical arm is ``pg_fts`` (ADR-0001). A hybrid config whose
-    file says ``bm25`` is therefore NOT what the service executes -- and a
-    result labelled with the file's name and hash would claim BM25 ranked it
-    (ADR-0007). So the served variant carries its own backend, its own name
-    and therefore its own content hash. Dense configs are served unchanged.
-    """
-    lexical = config.lexical
-    if lexical is None or lexical.backend == "pg_fts":
-        return config
-    return config.model_copy(
-        update={
-            "name": f"{config.name}+pg_fts",
-            "lexical": lexical.model_copy(update={"backend": "pg_fts"}),
-        }
-    )
 
 
 def build_postgres_retriever(
@@ -54,19 +40,20 @@ def build_postgres_retriever(
     *,
     reranker: Reranker | None = None,
 ) -> Retriever:
-    """A retriever over rows already loaded by `gt db load`."""
-    served = served_config(config)
-    chunks = chunk_corpus(documents, served.chunking)
-    key = index_key(served.chunking, served.embedding)
+    """A retriever whose dense arm reads rows already loaded by `gt db load`."""
+    chunks = chunk_corpus(documents, config.chunking)
+    key = index_key(config.chunking, config.embedding)
 
-    lexical = None
-    if served.lexical is not None:
-        lexical = PgFtsIndex(conn, key, served.lexical.language)
+    lexical: LexicalIndex | None
+    if config.lexical is not None and config.lexical.backend == "pg_fts":
+        lexical = PgFtsIndex(conn, key, config.lexical.language)
+    else:
+        lexical = build_lexical_index(config, chunks)
 
     return Retriever(
-        served,
+        config,
         embedder=embedder,
-        vector_index=PgVectorIndex(conn, key, served.embedding.dimension),
+        vector_index=PgVectorIndex(conn, key, config.embedding.dimension),
         lexical_index=lexical,
         chunks={chunk.chunk_id: chunk for chunk in chunks},
         reranker=reranker,

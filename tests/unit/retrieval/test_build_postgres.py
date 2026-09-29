@@ -3,32 +3,7 @@
 from __future__ import annotations
 
 from groundtruth.index.postgres import index_key
-from groundtruth.retrieval.build_postgres import served_config
 from tests.fixtures.mini_corpus import mini_config
-
-
-class TestServedConfig:
-    def test_a_dense_config_is_served_unchanged(self):
-        config = mini_config(retrieval_mode="dense")
-        assert served_config(config) == config
-
-    def test_a_bm25_hybrid_is_served_as_pg_fts_under_its_own_name(self):
-        # ADR-0007: a result must never claim BM25 ranked it when pg_fts did.
-        config = mini_config(name="mini_hybrid", retrieval_mode="hybrid")
-        served = served_config(config)
-        assert served.lexical is not None
-        assert served.lexical.backend == "pg_fts"
-        assert served.name == "mini_hybrid+pg_fts"
-
-    def test_the_served_variant_has_its_own_content_hash(self):
-        # Different lexical backend is a different experiment; a shared hash
-        # would let a served result be mistaken for the gated one.
-        config = mini_config(retrieval_mode="hybrid")
-        assert served_config(config).config_hash != config.config_hash
-
-    def test_a_config_already_on_pg_fts_is_left_alone(self):
-        config = served_config(mini_config(name="x", retrieval_mode="hybrid"))
-        assert served_config(config) == config
 
 
 class TestIndexKey:

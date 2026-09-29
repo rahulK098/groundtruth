@@ -9,10 +9,11 @@ vectors, loaded into Postgres by `gt db load`. Needs `docker compose up -d
 db` and the `api` extra; skips cleanly without them, so the gate and the fast
 path never require infrastructure (ADR-0006).
 
-Parity is asserted for DENSE configs only, and that is not a gap: the
-service's lexical arm is pg_fts, which is deliberately not BM25 (ADR-0007),
-so a hybrid config is served as a differently-named, differently-hashed
-variant. What IS asserted for hybrid is that the variant is labelled honestly.
+Asserted for EVERY shipped config. Since ADR-0014 the service's lexical arm
+is the same in-process BM25 the gate measures, so the only thing that differs
+between the two paths is where the dense vectors are read from -- and that
+must not move a single rank. ``pg_fts`` remains available as an explicit
+backend, and is tested separately below as the measurable-but-worse option.
 """
 
 from __future__ import annotations
@@ -30,12 +31,14 @@ from groundtruth.embedding.cache import load_cached_only_embedder
 from groundtruth.golden.models import GoldenSet
 from groundtruth.golden.store import read_golden_set
 from groundtruth.paths import cache_dir, corpus_dir, golden_dir
+from groundtruth.rerank.cache import load_cached_only_reranker
 from groundtruth.retrieval.build import build_cached_retriever
+from groundtruth.retrieval.pipeline import Retriever
 from groundtruth.settings import Settings
 
 pytestmark = pytest.mark.integration
 
-DENSE_CONFIGS = ("dense_512", "dense_256")
+ALL_CONFIGS = ("dense_512", "dense_256", "hybrid_512", "hybrid_512_rerank")
 
 #: float32 rounding, not a tolerance for disagreement: both paths score the
 #: same unit vectors, and observed differences are ~1e-7.
@@ -81,16 +84,33 @@ def _config(name: str) -> RetrievalConfig:
     return load_config(shipped_configs_dir() / f"{name}.yaml")
 
 
-def _postgres_retriever(config: RetrievalConfig, documents: tuple[Document, ...], conn: Any):
+def _postgres_retriever(
+    config: RetrievalConfig, documents: tuple[Document, ...], conn: Any
+) -> Retriever:
     from groundtruth.retrieval.build_postgres import build_postgres_retriever
 
     embedder = load_cached_only_embedder(
         config.embedding.model_id, config.embedding.revision, cache_dir() / "embeddings"
     )
-    return build_postgres_retriever(config, documents, embedder, conn)
+    reranker = None
+    if config.reranker.enabled and config.reranker.model_id and config.reranker.revision:
+        reranker = load_cached_only_reranker(
+            config.reranker.model_id, config.reranker.revision, cache_dir() / "rerank"
+        )
+    return build_postgres_retriever(config, documents, embedder, conn, reranker=reranker)
 
 
-@pytest.mark.parametrize("name", DENSE_CONFIGS)
+def _pg_fts(config: RetrievalConfig) -> RetrievalConfig:
+    assert config.lexical is not None
+    return config.model_copy(
+        update={
+            "name": f"{config.name}_pg_fts",
+            "lexical": config.lexical.model_copy(update={"backend": "pg_fts"}),
+        }
+    )
+
+
+@pytest.mark.parametrize("name", ALL_CONFIGS)
 def test_postgres_returns_the_identical_top_10_for_every_golden_query(
     name: str, conn: Any, documents: tuple[Document, ...], golden: GoldenSet
 ) -> None:
@@ -110,7 +130,7 @@ def test_postgres_returns_the_identical_top_10_for_every_golden_query(
     )
 
 
-@pytest.mark.parametrize("name", DENSE_CONFIGS)
+@pytest.mark.parametrize("name", ("dense_512", "dense_256"))
 def test_dense_scores_agree_to_float32_rounding(
     name: str, conn: Any, documents: tuple[Document, ...], golden: GoldenSet
 ) -> None:
@@ -130,43 +150,41 @@ def test_dense_scores_agree_to_float32_rounding(
     assert worst < SCORE_TOLERANCE
 
 
-def test_the_served_hybrid_is_labelled_as_pg_fts(
-    conn: Any, documents: tuple[Document, ...], golden: GoldenSet
-) -> None:
-    postgres = _postgres_retriever(_config("hybrid_512"), documents, conn)
-    # A golden query: the cache-only embedder (correctly) refuses any string
-    # that is not committed, so an ad-hoc query here would be a cache miss.
-    result = postgres.retrieve(golden.pairs[0].query)
-
-    assert result.config_name == "hybrid_512+pg_fts"
-    assert result.config_hash != _config("hybrid_512").config_hash
-    assert postgres.lexical_index is not None
-    assert postgres.lexical_index.backend == "pg_fts"
-
-
-def test_pg_fts_only_returns_chunks_matching_a_query_term(
+def test_the_service_hybrid_uses_bm25_not_pg_fts(
     conn: Any, documents: tuple[Document, ...]
 ) -> None:
+    # ADR-0014: pg_fts made the served hybrid worse than dense-only.
     postgres = _postgres_retriever(_config("hybrid_512"), documents, conn)
     assert postgres.lexical_index is not None
-    hits = postgres.lexical_index.search("certiorari", 20)
-    assert hits
-    chunks = {c.chunk_id: c for c in postgres._chunks.values()}
-    assert all("certiorari" in chunks[hit.chunk_id].text.lower() for hit in hits)
+    assert postgres.lexical_index.backend == "bm25"
 
 
-def test_pg_fts_matches_any_term_not_all_terms(conn: Any, documents: tuple[Document, ...]) -> None:
-    # plainto_tsquery ANDs terms; an AND over a long natural-language question
-    # matches almost nothing. The index rewrites it to OR, the same candidate
-    # rule the in-process BM25 arm uses.
-    postgres = _postgres_retriever(_config("hybrid_512"), documents, conn)
-    assert postgres.lexical_index is not None
-    assert postgres.lexical_index.search("certiorari zzzznotawordzzzz", 5)
+class TestExplicitPgFts:
+    """pg_fts is still available when a config declares it -- the IDF gap stays measurable."""
 
+    def test_is_selected_only_when_declared(
+        self, conn: Any, documents: tuple[Document, ...]
+    ) -> None:
+        postgres = _postgres_retriever(_pg_fts(_config("hybrid_512")), documents, conn)
+        assert postgres.lexical_index is not None
+        assert postgres.lexical_index.backend == "pg_fts"
 
-def test_reloading_is_idempotent(conn: Any, documents: tuple[Document, ...]) -> None:
-    from groundtruth.index.postgres import loaded_keys
+    def test_only_returns_chunks_matching_a_query_term(
+        self, conn: Any, documents: tuple[Document, ...]
+    ) -> None:
+        postgres = _postgres_retriever(_pg_fts(_config("hybrid_512")), documents, conn)
+        assert postgres.lexical_index is not None
+        hits = postgres.lexical_index.search("certiorari", 20)
+        assert hits
+        chunks = postgres._chunks
+        assert all("certiorari" in chunks[hit.chunk_id].text.lower() for hit in hits)
 
-    before = loaded_keys(conn)
-    postgres = _postgres_retriever(_config("dense_512"), documents, conn)
-    assert postgres.vector_index.count in before.values()
+    def test_matches_any_term_not_all_terms(
+        self, conn: Any, documents: tuple[Document, ...]
+    ) -> None:
+        # plainto_tsquery ANDs terms; an AND over a natural-language question
+        # matches almost nothing. The index rewrites it to OR, the same
+        # candidate rule the in-process BM25 arm uses.
+        postgres = _postgres_retriever(_pg_fts(_config("hybrid_512")), documents, conn)
+        assert postgres.lexical_index is not None
+        assert postgres.lexical_index.search("certiorari zzzznotawordzzzz", 5)
