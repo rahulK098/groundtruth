@@ -83,6 +83,10 @@ class Settings(BaseSettings):
     #: needs no database. Defaults to the Compose service published on 5433.
     gt_database_url: str = "postgresql://groundtruth:groundtruth@127.0.0.1:5433/groundtruth"
 
+    #: Comma-separated config names the service builds retrievers for. Empty
+    #: means the default set, which excludes the reranker arm (~105 s/query).
+    gt_serve_configs: str = ""
+
     def require_courtlistener_token(self) -> str:
         if self.courtlistener_api_token is None:
             raise MissingCredentialError(

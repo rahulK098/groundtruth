@@ -1,12 +1,14 @@
-# The service path (ADR-0001, ADR-0008). NOT needed for the gate, which runs
-# in-process with no infrastructure -- see docs/how-to-run.md.
+# The service path (ADR-0001, ADR-0008), plus the gate in a container.
 #
-#   docker compose up --build        # db + api
+#   docker compose up --build        # db + api on http://127.0.0.1:8000
 #   docker compose run --rm gate     # the gate, environment-independent
 #
+# The gate needs neither the database nor the api image: it is the in-process
+# path, run in a clean Linux environment with no model libraries installed.
+#
 # Reset: `docker compose down -v`. The schema is created by `gt db load`
-# (idempotent), not by initdb scripts, so there is no "initdb only runs on an
-# empty volume" trap to fall into.
+# (idempotent, run on every api start), not by initdb scripts, so there is no
+# "initdb only runs on an empty volume" trap to fall into.
 
 services:
   db:
@@ -26,5 +28,40 @@ services:
       timeout: 3s
       retries: 30
 
+  api:
+    build:
+      context: .
+      target: app
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      GT_DATABASE_URL: postgresql://groundtruth:groundtruth@db:5432/groundtruth
+      # The reranker arm is off by default (~105 s/query on CPU). Opt in with
+      # GT_SERVE_CONFIGS=dense_512,dense_256,hybrid_512,hybrid_512_rerank
+      GT_SERVE_CONFIGS: ${GT_SERVE_CONFIGS:-}
+      HF_HOME: /hf-cache
+    ports:
+      - "127.0.0.1:8000:8000"
+    volumes:
+      # Model weights downloaded on first start, kept across restarts.
+      - hf-cache:/hf-cache
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request,sys; sys.exit(urllib.request.urlopen('http://127.0.0.1:8000/readyz').status != 200)"]
+      interval: 5s
+      timeout: 5s
+      retries: 60
+      start_period: 60s
+
+  gate:
+    build:
+      context: .
+      target: gate
+    # The committed baseline, read-only: a gate run must never rewrite it.
+    volumes:
+      - ./results:/app/results:ro
+    profiles: ["gate"]
+
 volumes:
   pgdata:
+  hf-cache:

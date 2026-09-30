@@ -2,8 +2,8 @@
 # target here -- this file is intentionally thin, one line per command,
 # so it never drifts from what that document promises.
 
-.PHONY: reproduce verify gate demo-top-k demo-chunk-size demo-improvement \
-        demo-rerank demo-regression demos
+.PHONY: reproduce verify gate gate-docker service demo-top-k demo-chunk-size \
+        demo-improvement demo-rerank demo-regression demos
 
 # "The one command" (docs/how-to-run.md). gt report (the markdown
 # comparison table) is Phase 12 work and not implemented yet -- everything
@@ -21,6 +21,14 @@ verify:
 # The regression gate itself (ADR-0006): local, no CI, no minutes, no secrets.
 gate: verify
 	uv run pytest -m gate
+
+# The same gate in a clean Linux container with no model libraries installed.
+gate-docker:
+	docker compose run --rm gate
+
+# The service path: Postgres + pgvector and the FastAPI adapter on :8000.
+service:
+	docker compose up --build
 
 # Three self-reverting scenarios (docs/how-to-run.md). None writes to a
 # tracked file -- see scripts/demo/_common.py for why "revert" here means

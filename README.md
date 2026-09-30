@@ -91,7 +91,8 @@ that update can't happen silently.
 | 7 — First numbers, freeze baseline | **done** — hybrid_512 leads on every metric; see [Results](#results) |
 | 8 — Regression gate + demos | **done** — `pytest -m gate`, self-reverting demos in `scripts/demo/` |
 | 9 — Reranker | **done** — cross-encoder gated from a committed score cache; measured as a regression, not an improvement |
-| 10–12 — Service, generation eval, report | not started |
+| 10 — Service (FastAPI + Postgres) | **done** — identical top-10 to the gated path for all four configs on every golden query; ~90 ms warm |
+| 11–12 — Generation eval, report | not started |
 
 ## Running it
 
@@ -100,7 +101,7 @@ API key, no model download, no GPU, no network.
 
 ```bash
 uv sync --frozen --extra dev     # ~50 packages, no torch
-uv run pytest                    # 812 tests, gate included by default
+uv run pytest                    # 853 tests; gate included, Postgres tests skip without it
 uv run gt --help
 ```
 
@@ -117,6 +118,33 @@ uv run gt search "standard for granting summary judgment" --config hybrid_512
 
 Passage vectors still come from the cache; only the query is embedded. The gate
 uses the cache-only embedder, which cannot compute anything at all.
+
+### The gate, in a container
+
+```bash
+docker compose run --rm gate     # corpus verify + cache verify + pytest -m gate
+```
+
+The gate image installs only the `dev` extra: no torch, no model weights, no
+database driver. It *cannot* download a model, which is what makes "the gate
+needs no model" a structural property rather than a promise.
+
+### The service
+
+```bash
+docker compose up --build        # Postgres + pgvector, and the API on :8000
+curl -s localhost:8000/search -H 'content-type: application/json' \
+  -d '{"query":"when can a court grant summary judgment","config_name":"hybrid_512","top_k":3}'
+```
+
+A thin FastAPI adapter over **the same `Retriever` the gate measures**. The only
+difference is where the dense vectors are read from (pgvector instead of a NumPy
+matrix), and an integration test asserts that difference moves nothing: the
+service returns the identical top-10 as the gated path for all four
+configurations on every golden query. Every response carries per-stage scores
+and per-stage latency; `/version` reports the git SHA, model revisions and the
+corpus and golden-set hashes. The reranker arm is off by default (~105 s per
+query on CPU); opt in with `GT_SERVE_CONFIGS`.
 
 ### Regenerating the committed artifacts
 
@@ -176,9 +204,12 @@ Stated up front, because a harness that hides its own weaknesses is worthless:
   stops a commit that skips it. Evidence that it bites is reproducible via
   `make demo-regression` rather than a CI screenshot.
 - **The headline numbers come from the NumPy path, not Postgres.** A parity test
-  ties them together.
-- **Postgres `tsvector` is not BM25** — it has no IDF term at all. It is never
-  called BM25 here; the backend is named `pg_fts`.
+  ties them together: identical top-10 for every config on every golden query.
+- **Postgres full-text search is not BM25**, and here it measurably hurts: used as
+  the hybrid's lexical arm, `pg_fts` scored nDCG@10 0.493 against BM25's 0.607 —
+  *worse than dense retrieval alone*. So the service uses the same in-process
+  BM25 as the gate; `pg_fts` remains available, and named as such, only for
+  measuring that gap.
 - **The LLM judge is not deterministic.** Anthropic has no seed parameter.
   Reproducibility comes from a committed judgment cache, and the measured
   run-to-run σ is published alongside the metric.

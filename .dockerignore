@@ -11,11 +11,14 @@
 # Windows-native and would be broken inside a Linux container anyway.
 .venv/
 venv/
-__pycache__/
-*.py[cod]
+# `**/` matters: a bare `__pycache__/` only matches at the context root, and
+# the nested ones carry Windows-compiled bytecode with host paths baked in.
+**/__pycache__/
+**/*.py[cod]
 .pytest_cache/
 .ruff_cache/
 .mypy_cache/
+.hypothesis/
 .coverage
 htmlcov/
 
